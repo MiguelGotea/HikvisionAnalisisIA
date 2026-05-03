@@ -201,8 +201,9 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
             tiene_audio = 'Sí' if tiene_audio else 'No',
         )
 
-        # 3. Llamar generateContent con file_uri
+        # 3. Llamar generateContent — cascade por versión de API y modelo
         log.info(f"🤖 Analizando con {modelo}...")
+
         payload = {
             'contents': [{
                 'role': 'user',
@@ -218,13 +219,32 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
             }
         }
 
-        resp = requests.post(
-            GEMINI_CONTENT_URL.format(model=modelo),
-            params={'key': api_key},
-            json=payload,
-            timeout=90
-        )
+        # Orden de intentos: v1beta → v1 → fallback gemini-1.5-pro
+        intentos_modelo = [
+            f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent",
+            f"https://generativelanguage.googleapis.com/v1/models/{modelo}:generateContent",
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
+        ]
+
+
+        resp = None
+        for url_intento in intentos_modelo:
+            log.info(f"   Intentando: {url_intento.split('/models/')[1].split(':')[0]}")
+            resp = requests.post(
+                url_intento,
+                params={'key': api_key},
+                json=payload,
+                timeout=90
+            )
+            if resp.status_code == 200:
+                break
+            log.warning(f"   HTTP {resp.status_code}: {resp.text[:300]}")
+            if resp.status_code not in (404, 400):
+                # Error no recuperable (401, 429, 500...)
+                resp.raise_for_status()
+
         resp.raise_for_status()
+
 
         # 4. Parsear respuesta
         content = resp.json()
