@@ -206,6 +206,22 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
 
         # v1beta es OBLIGATORIO para Files API (file_data no existe en v1)
         BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+
+        payload = {
+            'contents': [{
+                'role': 'user',
+                'parts': [
+                    {'text': f"{SYSTEM_PROMPT}\n\n{user_prompt}"},
+                    {'file_data': {'mime_type': 'video/mp4', 'file_uri': file_uri}},
+                ]
+            }],
+            'generationConfig': {
+                'temperature': 0.1,
+                'maxOutputTokens': 1024,
+                'response_mime_type': 'application/json',
+            }
+        }
+
         modelos_a_intentar = [
             modelo,                   # Lo que devuelve el PHP (gemini-2.5-flash)
             "gemini-2.5-flash",       # Mejor modelo disponible para video
@@ -216,6 +232,7 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
         # Eliminar duplicados manteniendo orden
         vistos = set()
         modelos_unicos = [m for m in modelos_a_intentar if not (m in vistos or vistos.add(m))]
+
 
         resp = None
         for nombre_modelo in modelos_unicos:
