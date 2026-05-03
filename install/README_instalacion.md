@@ -24,7 +24,31 @@ Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
 
 ---
 
-## Paso 2 — Verificar la llave SSH
+## Paso 2 — Generar y registrar llave SSH (si no existe)
+
+Si la PC es nueva, debes generar una llave y autorizarla en el VPS:
+
+1. **Generar la llave** (presiona Enter a todo, sin contraseña):
+   ```powershell
+   ssh-keygen -t ed25519 -C "sucursal_nombre"
+   ```
+
+2. **Copiar la llave pública**:
+   ```powershell
+   cat $HOME\.ssh\id_ed25519.pub
+   # Copia el texto que empieza con "ssh-ed25519 ..."
+   ```
+
+3. **Registrar en el VPS**:
+   Accede al VPS desde una PC que ya tenga acceso y pega la llave:
+   ```bash
+   # En el VPS:
+   echo "pega_aqui_la_llave_copiada" >> ~/.ssh/authorized_keys
+   ```
+
+---
+
+## Paso 3 — Verificar la llave SSH
 
 La llave debe estar en `C:\Users\Pitaya\.ssh\id_ed25519` (o el usuario que corresponda).
 
@@ -66,6 +90,11 @@ Esto crea una tarea que:
 - ✅ Se ejecuta como `SYSTEM` (no necesita usuario conectado)
 - ✅ Arranca automáticamente con Windows
 - ✅ Se reconecta si el túnel cae
+
+> [!IMPORTANT]
+> **Nota sobre el usuario SYSTEM**: La tarea programada corre como `SYSTEM`. Para que SSH encuentre la llave, copia la carpeta `.ssh` de tu usuario a:
+> `C:\Windows\System32\config\systemprofile\`
+> (Debe quedar `C:\Windows\System32\config\systemprofile\.ssh\id_ed25519`)
 
 ---
 

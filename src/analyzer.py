@@ -1,15 +1,14 @@
 """
-analyzer.py — Análisis de video de atención al cliente con Gemini.
+analyzer.py — Análisis de video de atención al cliente con Gemini 2.5 Flash.
 
 Flujo:
 1. Subir video a Gemini Files API (resumable upload)
-2. Esperar a que el archivo esté en estado ACTIVE
-3. Enviar prompt de análisis referenciando el file_uri
-4. Parsear respuesta JSON con calificaciones
-5. Eliminar archivo de Gemini (limpieza)
+2. Esperar estado ACTIVE (Gemini procesa el video)
+3. Enviar prompt de análisis con file_uri
+4. Parsear respuesta JSON con calificaciones 1-10
+5. Eliminar archivo de Gemini (limpieza de cuota)
 
-Calificaciones retornadas (1-10 cada una):
-  amabilidad, saludo, despedida, oferta_membresia
+Modelo: gemini-2.5-flash (v1beta, Files API para video multimodal)
 """
 
 import requests
@@ -23,19 +22,18 @@ log = get_logger('analyzer')
 
 GEMINI_UPLOAD_URL  = "https://generativelanguage.googleapis.com/upload/v1beta/files"
 GEMINI_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-# IMPORTANTE: file_name ya incluye el prefijo 'files/' (ej: 'files/abc123')
-# Por eso usamos v1beta/{name} en lugar de v1beta/files/{name} para evitar duplicar
+# file_name retorna "files/abc123" — usar v1beta/{name} para no duplicar el prefijo
 GEMINI_FILES_BASE  = "https://generativelanguage.googleapis.com/v1beta/{name}"
 
 
 # ── Upload ───────────────────────────────────────────────────
 
-def _upload_video(video_path: str, api_key: str) -> str:
+def _upload_video(video_path: str, api_key: str) -> tuple[str, str]:
     """
     Sube el video a Gemini Files API (resumable upload).
-    Retorna el file_uri para usar en el prompt.
+    Retorna (file_uri, file_name).
     """
-    file_size   = os.path.getsize(video_path)
+    file_size    = os.path.getsize(video_path)
     display_name = os.path.basename(video_path)
 
     log.info(f"📤 Subiendo video a Gemini ({file_size/(1024*1024):.1f} MB)...")
@@ -59,7 +57,7 @@ def _upload_video(video_path: str, api_key: str) -> str:
     if not upload_url:
         raise RuntimeError("Gemini no devolvió upload URL en el header")
 
-    # Paso 2: Subir bytes del video
+    # Paso 2: Subir bytes
     with open(video_path, 'rb') as f:
         video_bytes = f.read()
 
@@ -71,35 +69,29 @@ def _upload_video(video_path: str, api_key: str) -> str:
             'X-Goog-Upload-Command': 'upload, finalize',
         },
         data=video_bytes,
-        timeout=120  # videos pueden tardar en subir
+        timeout=120
     )
     upload_resp.raise_for_status()
 
     file_info = upload_resp.json()
     file_uri  = file_info.get('file', {}).get('uri')
-    file_name = file_info.get('file', {}).get('name')
+    file_name = file_info.get('file', {}).get('name')   # "files/abc123"
 
     if not file_uri:
         raise RuntimeError(f"Gemini no retornó file URI. Respuesta: {file_info}")
 
-    log.info(f"⏳ Video subido. Esperando procesamiento Gemini...")
-
-    # Paso 3: Esperar estado ACTIVE (Gemini procesa el video)
+    log.info("⏳ Video subido. Esperando procesamiento Gemini...")
     _wait_for_active(file_name, api_key)
-
     log.info(f"✅ Video listo en Gemini: {file_uri}")
     return file_uri, file_name
 
 
 def _wait_for_active(file_name: str, api_key: str, max_wait: int = 300):
     """
-    Espera hasta que el archivo esté en estado ACTIVE.
-    
-    NOTA: La respuesta GET de un archivo en Gemini Files API retorna el objeto
-    File directamente en la raíz (NO dentro de {"file": {...}}).
-    Ejemplo: {"name": "files/abc", "state": "ACTIVE", "uri": "..."}
+    Espera hasta que el archivo esté ACTIVE.
+    GET /v1beta/{file_name} retorna el File object directamente (state en raíz, no en 'file').
     """
-    deadline = time.time() + max_wait
+    deadline     = time.time() + max_wait
     ultimo_estado = ''
     while time.time() < deadline:
         try:
@@ -109,28 +101,26 @@ def _wait_for_active(file_name: str, api_key: str, max_wait: int = 300):
                 timeout=15
             )
             if resp.status_code == 200:
-                data  = resp.json()
-                # state está en la raíz, NO dentro de 'file'
-                state = data.get('state', '')
+                state = resp.json().get('state', '')
                 if state != ultimo_estado:
                     log.info(f"   Gemini estado: {state}")
                     ultimo_estado = state
                 if state == 'ACTIVE':
                     return
                 if state == 'FAILED':
-                    raise RuntimeError(f"Gemini FAILED al procesar el video. Respuesta: {data}")
+                    raise RuntimeError(f"Gemini FAILED al procesar el video.")
             else:
-                log.warning(f"   Polling Gemini HTTP {resp.status_code}: {resp.text[:200]}")
+                log.warning(f"   Polling Gemini HTTP {resp.status_code}")
         except RuntimeError:
             raise
         except Exception as e:
-            log.warning(f"   Error en polling Gemini: {e}")
+            log.warning(f"   Error en polling: {e}")
         time.sleep(5)
-    raise RuntimeError(f"Timeout ({max_wait}s) esperando que Gemini procese el video. Último estado: {ultimo_estado}")
+    raise RuntimeError(f"Timeout ({max_wait}s) esperando que Gemini procese el video.")
 
 
 def _delete_gemini_file(file_name: str, api_key: str):
-    """Elimina el archivo de Gemini Files API para liberar cuota."""
+    """Elimina el archivo de Gemini para liberar cuota (48h de expiración de todos modos)."""
     try:
         requests.delete(
             GEMINI_FILES_BASE.format(name=file_name),
@@ -142,7 +132,7 @@ def _delete_gemini_file(file_name: str, api_key: str):
         log.warning(f"No se pudo eliminar archivo Gemini {file_name}: {e}")
 
 
-# ── Análisis ─────────────────────────────────────────────────
+# ── Prompts ───────────────────────────────────────────────────
 
 SYSTEM_PROMPT = """Eres un evaluador experto en atención al cliente para una cadena de batidos y bebidas naturales.
 Analizarás un clip de video de cámara de seguridad de una caja registradora.
@@ -169,20 +159,22 @@ Responde SOLO con este JSON (sin markdown):
   "cal_saludo": <1-10 o null>,
   "cal_despedida": <1-10 o null>,
   "cal_membresia": <1-10 o null>,
-  "resumen": "<2-3 oraciones describiendo la interacción observada y las calificaciones asignadas>",
+  "resumen": "<2-3 oraciones describiendo la interacción observada>",
   "tiene_audio": <true o false según lo que percibiste>
 }}"""
 
+
+# ── Análisis principal ────────────────────────────────────────
 
 def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: bool = False) -> dict:
     """
     Analiza el video con Gemini y retorna el dict con resultados.
 
-    gemini_key_info: {'api_key': '...', 'modelo': 'gemini-2.0-flash', ...}
+    gemini_key_info: {'api_key': '...', 'modelo': 'gemini-2.5-flash', ...}
     item: item de la cola con fecha, hora_inicio, hora_fin, local_codigo, etc.
     """
     api_key = gemini_key_info['api_key']
-    modelo  = gemini_key_info.get('modelo', 'gemini-2.0-flash')
+    modelo  = gemini_key_info.get('modelo', 'gemini-2.5-flash')
 
     file_uri  = None
     file_name = None
@@ -194,19 +186,15 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
         # 2. Construir prompt
         sucursal_nombre = item.get('sucursal_nombre') or f"Local {item['local_codigo']}"
         user_prompt = USER_PROMPT_TEMPLATE.format(
-            sucursal   = sucursal_nombre,
-            fecha      = item['fecha'],
+            sucursal    = sucursal_nombre,
+            fecha       = item['fecha'],
             hora_inicio = item['hora_inicio'],
-            hora_fin   = item['hora_fin'],
+            hora_fin    = item['hora_fin'],
             tiene_audio = 'Sí' if tiene_audio else 'No',
         )
 
-        # 3. Llamar generateContent — solo v1beta (v1 no soporta file_data)
+        # 3. Llamar generateContent (v1beta obligatorio para file_data)
         log.info(f"🤖 Analizando con {modelo}...")
-
-        # v1beta es OBLIGATORIO para Files API (file_data no existe en v1)
-        BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-
         payload = {
             'contents': [{
                 'role': 'user',
@@ -219,70 +207,32 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
                 'temperature': 0.1,
                 'maxOutputTokens': 4096,
                 'response_mime_type': 'application/json',
-                # Desactivar thinking interno (va dentro de generationConfig, no en la raíz)
-                'thinkingConfig': {'thinkingBudget': 0},
+                'thinkingConfig': {'thinkingBudget': 0},   # Dentro de generationConfig
             },
         }
 
-        modelos_a_intentar = [
-            modelo,                   # Lo que devuelve el PHP (gemini-2.5-flash)
-            "gemini-2.5-flash",       # Mejor modelo disponible para video
-            "gemini-2.0-flash",       # Fallback
-            "gemini-2.0-flash-001",   # Fallback pinned
-            "gemini-flash-latest",    # Alias genérico
-        ]
-        # Eliminar duplicados manteniendo orden
-        vistos = set()
-        modelos_unicos = [m for m in modelos_a_intentar if not (m in vistos or vistos.add(m))]
-
-
-        resp = None
-        for nombre_modelo in modelos_unicos:
-            url_intento = f"{BASE}/{nombre_modelo}:generateContent"
-            log.info(f"   Intentando modelo: {nombre_modelo}")
-            resp = requests.post(
-                url_intento,
-                params={'key': api_key},
-                json=payload,
-                timeout=90
-            )
-            if resp.status_code == 200:
-                log.info(f"   ✅ Modelo aceptado: {nombre_modelo}")
-                break
-            log.warning(f"   HTTP {resp.status_code}: {resp.text[:200]}")
-            if resp.status_code not in (404, 400):
-                resp.raise_for_status()
-
-        if resp is None or resp.status_code != 200:
-            # Diagnóstico: listar modelos disponibles para este key
-            try:
-                lista = requests.get(
-                    "https://generativelanguage.googleapis.com/v1beta/models",
-                    params={'key': api_key},
-                    timeout=15
-                ).json()
-                nombres = [m.get('name') for m in lista.get('models', [])]
-                log.error(f"   ❌ Ningún modelo funcionó. Modelos disponibles para este key: {nombres}")
-            except Exception:
-                pass
-            resp.raise_for_status()
-
-
+        resp = requests.post(
+            GEMINI_CONTENT_URL.format(model=modelo),
+            params={'key': api_key},
+            json=payload,
+            timeout=90
+        )
+        resp.raise_for_status()
 
         # 4. Parsear respuesta
         content = resp.json()
         texto   = content['candidates'][0]['content']['parts'][0]['text']
         datos   = _parse_json_safe(texto)
 
-        # Normalizar y validar calificaciones
+        # 5. Normalizar calificaciones
         resultado = {
-            'cal_amabilidad'  : _validar_cal(datos.get('cal_amabilidad')),
-            'cal_saludo'      : _validar_cal(datos.get('cal_saludo')),
-            'cal_despedida'   : _validar_cal(datos.get('cal_despedida')),
-            'cal_membresia'   : _validar_cal(datos.get('cal_membresia')),
-            'resumen'         : str(datos.get('resumen', ''))[:2000],
-            'tiene_audio'     : 1 if datos.get('tiene_audio') else int(tiene_audio),
-            'modelo_ia'       : modelo,
+            'cal_amabilidad' : _validar_cal(datos.get('cal_amabilidad')),
+            'cal_saludo'     : _validar_cal(datos.get('cal_saludo')),
+            'cal_despedida'  : _validar_cal(datos.get('cal_despedida')),
+            'cal_membresia'  : _validar_cal(datos.get('cal_membresia')),
+            'resumen'        : str(datos.get('resumen', ''))[:2000],
+            'tiene_audio'    : 1 if datos.get('tiene_audio') else int(tiene_audio),
+            'modelo_ia'      : modelo,
         }
 
         log.info(
@@ -295,13 +245,14 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
         return resultado
 
     finally:
-        # 5. Siempre limpiar el archivo de Gemini
         if file_name:
             _delete_gemini_file(file_name, api_key)
 
 
+# ── Helpers ───────────────────────────────────────────────────
+
 def _validar_cal(valor) -> int | None:
-    """Valida y normaliza una calificación 1-10 o retorna None."""
+    """Valida y normaliza calificación 1-10."""
     if valor is None:
         return None
     try:
@@ -312,13 +263,12 @@ def _validar_cal(valor) -> int | None:
 
 
 def _parse_json_safe(texto: str) -> dict:
-    """Extrae JSON de la respuesta de Gemini, tolerando posibles envoltorios."""
+    """Extrae JSON de la respuesta tolerando envoltorios markdown."""
     texto = texto.strip()
-    # Remover posibles bloques markdown ```json ... ```
     if texto.startswith('```'):
         lines = texto.split('\n')
         texto = '\n'.join(lines[1:-1] if lines[-1].strip() == '```' else lines[1:])
     try:
         return json.loads(texto)
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"Gemini retornó JSON inválido: {e}. Raw: {texto[:300]}")
+        raise RuntimeError(f"Gemini retornó JSON inválido: {e}. Raw: {texto[:400]}")
