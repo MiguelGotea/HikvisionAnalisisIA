@@ -1,0 +1,22 @@
+# Entorno — NO subir al repo
+.env
+
+# Sesiones WhatsApp (generadas en runtime por whatsapp-web.js)
+**/auth/
+
+# Dependencias Node
+**/node_modules/
+
+# Logs
+**/logs/
+*.log
+
+# IDE / Sistema
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Agentes locales
+.agent/
+.gemini/
