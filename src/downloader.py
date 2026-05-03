@@ -76,28 +76,45 @@ def download(item: dict) -> str:
         f"puerto={puerto} track={track}"
     )
 
-    cmd = [
-        "ffmpeg", "-y",
-        "-rtsp_transport", "tcp",
-        "-i", rtsp_url,
-        "-c:v", "copy",
-        "-c:a", "copy",          # Copiar audio si existe
-        "-t", str(duracion_seg),
-        ruta_salida
+    # DVR Hikvision/HiLook transmite audio en pcm_mulaw (G.711) que NO es
+    # compatible con contenedor MP4. Se transcodifica a AAC (sí compatible).
+    # Fallback sin audio si el codec del DVR es aún más exótico.
+    def _build_cmd(audio_flags: list) -> list:
+        return [
+            "ffmpeg", "-y",
+            "-rtsp_transport", "tcp",
+            "-i", rtsp_url,
+            "-c:v", "copy",
+            *audio_flags,
+            "-t", str(duracion_seg),
+            ruta_salida
+        ]
+
+    intentos = [
+        (["-c:a", "aac", "-b:a", "64k", "-ac", "1"], "audio AAC"),
+        (["-an"],                                       "sin audio"),
     ]
 
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=timeout_total
-        )
-    except subprocess.TimeoutExpired:
-        raise RuntimeError(
-            f"Timeout ({timeout_total}s) descargando cola={id_cola}. "
-            f"¿El túnel SSH está activo en el local?"
-        )
+    result = None
+    for audio_flags, descripcion_audio in intentos:
+        cmd = _build_cmd(audio_flags)
+        log.info(f"   Intentando con {descripcion_audio}...")
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_total
+            )
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                f"Timeout ({timeout_total}s) descargando cola={id_cola}. "
+                f"¿El túnel SSH está activo en el local?"
+            )
+        if result.returncode == 0:
+            log.info(f"   ✅ Descarga exitosa ({descripcion_audio})")
+            break
+        log.warning(f"   ⚠️  Falló con {descripcion_audio}, probando siguiente...")
 
     if result.returncode != 0:
         # Extraer último fragmento relevante del stderr de ffmpeg
