@@ -54,51 +54,22 @@ jobs:
       run: |
         ssh -o StrictHostKeyChecking=no ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }} << 'EOF'
           set -e
-          
-          # Asegurar que el directorio base existe
-          mkdir -p ${{ secrets.DO_PATH }}
           cd ${{ secrets.DO_PATH }}
 
-          # Asegurar que el venv existe (si no, lo creamos)
-          if [ ! -d "venv" ]; then
-            echo "🐍 Entorno virtual no encontrado. Creando venv..."
-            # Intentamos instalar venv si no está (solo si somos root)
-            if ! python3 -m venv venv >/dev/null 2>&1; then
-              echo "📦 Instalando python3-venv..."
-              apt-get update -qq && apt-get install -y python3-venv --quiet
-              python3 -m venv venv
-            fi
-            venv/bin/pip install --upgrade pip --quiet
-          fi
-
           # Actualizar dependencias Python en el venv
-          echo "📦 Actualizando dependencias..."
           venv/bin/pip install -r requirements.txt --quiet
 
-          # Asegurar que .env existe (copiar de .env.example si falta)
-          if [ ! -f ".env" ]; then
-            echo "📝 Creando .env inicial desde .env.example..."
-            cp .env.example .env
-          fi
-
           # Recargar systemd si el service file cambió
-          if [ -f "systemd/hikvision-worker.service" ]; then
-            echo "⚙️ Configurando servicio..."
-            cp systemd/hikvision-worker.service /etc/systemd/system/hikvision-worker.service
-            systemctl daemon-reload
-            systemctl enable hikvision-worker || true
-            
-            # Reiniciar worker
-            echo "🔄 Reiniciando worker..."
-            systemctl restart hikvision-worker
-            sleep 2
+          cp systemd/hikvision-worker.service /etc/systemd/system/hikvision-worker.service
+          systemctl daemon-reload
 
-            # Mostrar estado
-            echo "--- Estado del worker ---"
-            systemctl status hikvision-worker --no-pager -l || true
-          else
-            echo "⚠️ No se encontró systemd/hikvision-worker.service, saltando configuración de servicio."
-          fi
+          # Reiniciar worker
+          systemctl restart hikvision-worker
+          sleep 2
+
+          # Mostrar estado
+          echo "--- Estado del worker ---"
+          systemctl status hikvision-worker --no-pager -l || true
         EOF
 
     - name: ✅ Deploy completado
