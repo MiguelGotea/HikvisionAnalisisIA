@@ -23,7 +23,9 @@ log = get_logger('analyzer')
 
 GEMINI_UPLOAD_URL  = "https://generativelanguage.googleapis.com/upload/v1beta/files"
 GEMINI_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-GEMINI_FILES_URL   = "https://generativelanguage.googleapis.com/v1beta/files/{name}"
+# IMPORTANTE: file_name ya incluye el prefijo 'files/' (ej: 'files/abc123')
+# Por eso usamos v1beta/{name} en lugar de v1beta/files/{name} para evitar duplicar
+GEMINI_FILES_BASE  = "https://generativelanguage.googleapis.com/v1beta/{name}"
 
 
 # ── Upload ───────────────────────────────────────────────────
@@ -89,30 +91,49 @@ def _upload_video(video_path: str, api_key: str) -> str:
     return file_uri, file_name
 
 
-def _wait_for_active(file_name: str, api_key: str, max_wait: int = 120):
-    """Espera hasta que el archivo esté en estado ACTIVE."""
+def _wait_for_active(file_name: str, api_key: str, max_wait: int = 300):
+    """
+    Espera hasta que el archivo esté en estado ACTIVE.
+    
+    NOTA: La respuesta GET de un archivo en Gemini Files API retorna el objeto
+    File directamente en la raíz (NO dentro de {"file": {...}}).
+    Ejemplo: {"name": "files/abc", "state": "ACTIVE", "uri": "..."}
+    """
     deadline = time.time() + max_wait
+    ultimo_estado = ''
     while time.time() < deadline:
-        resp = requests.get(
-            GEMINI_FILES_URL.format(name=file_name),
-            params={'key': api_key},
-            timeout=15
-        )
-        if resp.status_code == 200:
-            state = resp.json().get('file', {}).get('state', '')
-            if state == 'ACTIVE':
-                return
-            if state == 'FAILED':
-                raise RuntimeError("Gemini reportó FAILED al procesar el video.")
-        time.sleep(3)
-    raise RuntimeError(f"Timeout ({max_wait}s) esperando que Gemini procese el video.")
+        try:
+            resp = requests.get(
+                GEMINI_FILES_BASE.format(name=file_name),
+                params={'key': api_key},
+                timeout=15
+            )
+            if resp.status_code == 200:
+                data  = resp.json()
+                # state está en la raíz, NO dentro de 'file'
+                state = data.get('state', '')
+                if state != ultimo_estado:
+                    log.info(f"   Gemini estado: {state}")
+                    ultimo_estado = state
+                if state == 'ACTIVE':
+                    return
+                if state == 'FAILED':
+                    raise RuntimeError(f"Gemini FAILED al procesar el video. Respuesta: {data}")
+            else:
+                log.warning(f"   Polling Gemini HTTP {resp.status_code}: {resp.text[:200]}")
+        except RuntimeError:
+            raise
+        except Exception as e:
+            log.warning(f"   Error en polling Gemini: {e}")
+        time.sleep(5)
+    raise RuntimeError(f"Timeout ({max_wait}s) esperando que Gemini procese el video. Último estado: {ultimo_estado}")
 
 
 def _delete_gemini_file(file_name: str, api_key: str):
     """Elimina el archivo de Gemini Files API para liberar cuota."""
     try:
         requests.delete(
-            GEMINI_FILES_URL.format(name=file_name),
+            GEMINI_FILES_BASE.format(name=file_name),
             params={'key': api_key},
             timeout=15
         )
