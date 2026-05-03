@@ -201,35 +201,29 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
             tiene_audio = 'Sí' if tiene_audio else 'No',
         )
 
-        # 3. Llamar generateContent — cascade por versión de API y modelo
+        # 3. Llamar generateContent — solo v1beta (v1 no soporta file_data)
         log.info(f"🤖 Analizando con {modelo}...")
 
-        payload = {
-            'contents': [{
-                'role': 'user',
-                'parts': [
-                    {'text': f"{SYSTEM_PROMPT}\n\n{user_prompt}"},
-                    {'file_data': {'mime_type': 'video/mp4', 'file_uri': file_uri}},
-                ]
-            }],
-            'generationConfig': {
-                'temperature': 0.1,
-                'maxOutputTokens': 1024,
-                'response_mime_type': 'application/json',
-            }
-        }
-
-        # Orden de intentos: v1beta → v1 → fallback gemini-1.5-pro
-        intentos_modelo = [
-            f"https://generativelanguage.googleapis.com/v1beta/models/{modelo}:generateContent",
-            f"https://generativelanguage.googleapis.com/v1/models/{modelo}:generateContent",
-            "https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-pro:generateContent",
+        # v1beta es OBLIGATORIO para Files API (file_data no existe en v1)
+        BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+        modelos_a_intentar = [
+            modelo,                  # Lo que devuelve el PHP (gemini-flash-latest, etc.)
+            "gemini-flash-latest",   # Alias que funciona en AIService.php del ERP
+            "gemini-2.0-flash",
+            "gemini-2.0-flash-exp",
+            "gemini-2.0-flash-lite",
+            "gemini-1.5-flash-latest",
+            "gemini-1.5-flash-001",
+            "gemini-1.5-flash-002",
         ]
-
+        # Eliminar duplicados manteniendo orden
+        vistos = set()
+        modelos_unicos = [m for m in modelos_a_intentar if not (m in vistos or vistos.add(m))]
 
         resp = None
-        for url_intento in intentos_modelo:
-            log.info(f"   Intentando: {url_intento.split('/models/')[1].split(':')[0]}")
+        for nombre_modelo in modelos_unicos:
+            url_intento = f"{BASE}/{nombre_modelo}:generateContent"
+            log.info(f"   Intentando modelo: {nombre_modelo}")
             resp = requests.post(
                 url_intento,
                 params={'key': api_key},
@@ -237,13 +231,26 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
                 timeout=90
             )
             if resp.status_code == 200:
+                log.info(f"   ✅ Modelo aceptado: {nombre_modelo}")
                 break
-            log.warning(f"   HTTP {resp.status_code}: {resp.text[:300]}")
+            log.warning(f"   HTTP {resp.status_code}: {resp.text[:200]}")
             if resp.status_code not in (404, 400):
-                # Error no recuperable (401, 429, 500...)
                 resp.raise_for_status()
 
-        resp.raise_for_status()
+        if resp is None or resp.status_code != 200:
+            # Diagnóstico: listar modelos disponibles para este key
+            try:
+                lista = requests.get(
+                    "https://generativelanguage.googleapis.com/v1beta/models",
+                    params={'key': api_key},
+                    timeout=15
+                ).json()
+                nombres = [m.get('name') for m in lista.get('models', [])]
+                log.error(f"   ❌ Ningún modelo funcionó. Modelos disponibles para este key: {nombres}")
+            except Exception:
+                pass
+            resp.raise_for_status()
+
 
 
         # 4. Parsear respuesta
