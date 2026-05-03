@@ -1,15 +1,25 @@
-# Entorno — NO subir al repo
+# Entorno — NUNCA subir al repo
 .env
 
-# Sesiones WhatsApp (generadas en runtime por whatsapp-web.js)
-**/auth/
+# Entorno virtual Python
+venv/
+.venv/
 
-# Dependencias Node
-**/node_modules/
+# Videos temporales (se crean y borran automáticamente)
+temp/
+*.mp4
+*.mp4_small
 
-# Logs
-**/logs/
+# Logs (generados en runtime)
+logs/
 *.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
 
 # IDE / Sistema
 .vscode/

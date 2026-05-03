@@ -1,0 +1,260 @@
+"""
+analyzer.py — Análisis de video de atención al cliente con Gemini.
+
+Flujo:
+1. Subir video a Gemini Files API (resumable upload)
+2. Esperar a que el archivo esté en estado ACTIVE
+3. Enviar prompt de análisis referenciando el file_uri
+4. Parsear respuesta JSON con calificaciones
+5. Eliminar archivo de Gemini (limpieza)
+
+Calificaciones retornadas (1-10 cada una):
+  amabilidad, saludo, despedida, oferta_membresia
+"""
+
+import requests
+import json
+import time
+import os
+
+from .logger import get_logger
+
+log = get_logger('analyzer')
+
+GEMINI_UPLOAD_URL  = "https://generativelanguage.googleapis.com/upload/v1beta/files"
+GEMINI_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+GEMINI_FILES_URL   = "https://generativelanguage.googleapis.com/v1beta/files/{name}"
+
+
+# ── Upload ───────────────────────────────────────────────────
+
+def _upload_video(video_path: str, api_key: str) -> str:
+    """
+    Sube el video a Gemini Files API (resumable upload).
+    Retorna el file_uri para usar en el prompt.
+    """
+    file_size   = os.path.getsize(video_path)
+    display_name = os.path.basename(video_path)
+
+    log.info(f"📤 Subiendo video a Gemini ({file_size/(1024*1024):.1f} MB)...")
+
+    # Paso 1: Iniciar upload resumable
+    init_resp = requests.post(
+        f"{GEMINI_UPLOAD_URL}?key={api_key}",
+        headers={
+            'X-Goog-Upload-Protocol': 'resumable',
+            'X-Goog-Upload-Command': 'start',
+            'X-Goog-Upload-Header-Content-Length': str(file_size),
+            'X-Goog-Upload-Header-Content-Type': 'video/mp4',
+            'Content-Type': 'application/json',
+        },
+        json={'file': {'display_name': display_name}},
+        timeout=30
+    )
+    init_resp.raise_for_status()
+
+    upload_url = init_resp.headers.get('X-Goog-Upload-URL')
+    if not upload_url:
+        raise RuntimeError("Gemini no devolvió upload URL en el header")
+
+    # Paso 2: Subir bytes del video
+    with open(video_path, 'rb') as f:
+        video_bytes = f.read()
+
+    upload_resp = requests.post(
+        upload_url,
+        headers={
+            'Content-Length': str(file_size),
+            'X-Goog-Upload-Offset': '0',
+            'X-Goog-Upload-Command': 'upload, finalize',
+        },
+        data=video_bytes,
+        timeout=120  # videos pueden tardar en subir
+    )
+    upload_resp.raise_for_status()
+
+    file_info = upload_resp.json()
+    file_uri  = file_info.get('file', {}).get('uri')
+    file_name = file_info.get('file', {}).get('name')
+
+    if not file_uri:
+        raise RuntimeError(f"Gemini no retornó file URI. Respuesta: {file_info}")
+
+    log.info(f"⏳ Video subido. Esperando procesamiento Gemini...")
+
+    # Paso 3: Esperar estado ACTIVE (Gemini procesa el video)
+    _wait_for_active(file_name, api_key)
+
+    log.info(f"✅ Video listo en Gemini: {file_uri}")
+    return file_uri, file_name
+
+
+def _wait_for_active(file_name: str, api_key: str, max_wait: int = 120):
+    """Espera hasta que el archivo esté en estado ACTIVE."""
+    deadline = time.time() + max_wait
+    while time.time() < deadline:
+        resp = requests.get(
+            GEMINI_FILES_URL.format(name=file_name),
+            params={'key': api_key},
+            timeout=15
+        )
+        if resp.status_code == 200:
+            state = resp.json().get('file', {}).get('state', '')
+            if state == 'ACTIVE':
+                return
+            if state == 'FAILED':
+                raise RuntimeError("Gemini reportó FAILED al procesar el video.")
+        time.sleep(3)
+    raise RuntimeError(f"Timeout ({max_wait}s) esperando que Gemini procese el video.")
+
+
+def _delete_gemini_file(file_name: str, api_key: str):
+    """Elimina el archivo de Gemini Files API para liberar cuota."""
+    try:
+        requests.delete(
+            GEMINI_FILES_URL.format(name=file_name),
+            params={'key': api_key},
+            timeout=15
+        )
+        log.info(f"🗑️  Archivo Gemini eliminado: {file_name}")
+    except Exception as e:
+        log.warning(f"No se pudo eliminar archivo Gemini {file_name}: {e}")
+
+
+# ── Análisis ─────────────────────────────────────────────────
+
+SYSTEM_PROMPT = """Eres un evaluador experto en atención al cliente para una cadena de batidos y bebidas naturales.
+Analizarás un clip de video de cámara de seguridad de una caja registradora.
+Tu tarea es evaluar la calidad de atención al cliente del personal.
+
+Responde ÚNICAMENTE con un JSON válido, sin markdown, sin texto adicional."""
+
+USER_PROMPT_TEMPLATE = """Analiza este video de cámara de seguridad de la caja registradora.
+Sucursal: {sucursal}
+Fecha/hora Nicaragua: {fecha} {hora_inicio} → {hora_fin}
+Video tiene audio: {tiene_audio}
+
+Evalúa al empleado en las siguientes categorías con una calificación del 1 al 10:
+- amabilidad: ¿El trato al cliente fue amable, sonriente y respetuoso?
+- saludo: ¿Saludó al cliente al acercarse a la caja?
+- despedida: ¿Se despidió del cliente al finalizar la atención?
+- oferta_membresia: ¿Ofreció o mencionó el programa de membresía/puntos del club?
+
+Si el video no muestra claramente una interacción cliente-empleado, asigna null a esa categoría.
+
+Responde SOLO con este JSON (sin markdown):
+{{
+  "cal_amabilidad": <1-10 o null>,
+  "cal_saludo": <1-10 o null>,
+  "cal_despedida": <1-10 o null>,
+  "cal_membresia": <1-10 o null>,
+  "resumen": "<2-3 oraciones describiendo la interacción observada y las calificaciones asignadas>",
+  "tiene_audio": <true o false según lo que percibiste>
+}}"""
+
+
+def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: bool = False) -> dict:
+    """
+    Analiza el video con Gemini y retorna el dict con resultados.
+
+    gemini_key_info: {'api_key': '...', 'modelo': 'gemini-2.0-flash', ...}
+    item: item de la cola con fecha, hora_inicio, hora_fin, local_codigo, etc.
+    """
+    api_key = gemini_key_info['api_key']
+    modelo  = gemini_key_info.get('modelo', 'gemini-2.0-flash')
+
+    file_uri  = None
+    file_name = None
+
+    try:
+        # 1. Subir video
+        file_uri, file_name = _upload_video(video_path, api_key)
+
+        # 2. Construir prompt
+        sucursal_nombre = item.get('sucursal_nombre') or f"Local {item['local_codigo']}"
+        user_prompt = USER_PROMPT_TEMPLATE.format(
+            sucursal   = sucursal_nombre,
+            fecha      = item['fecha'],
+            hora_inicio = item['hora_inicio'],
+            hora_fin   = item['hora_fin'],
+            tiene_audio = 'Sí' if tiene_audio else 'No',
+        )
+
+        # 3. Llamar generateContent con file_uri
+        log.info(f"🤖 Analizando con {modelo}...")
+        payload = {
+            'contents': [{
+                'role': 'user',
+                'parts': [
+                    {'text': f"{SYSTEM_PROMPT}\n\n{user_prompt}"},
+                    {'file_data': {'mime_type': 'video/mp4', 'file_uri': file_uri}},
+                ]
+            }],
+            'generationConfig': {
+                'temperature': 0.1,
+                'maxOutputTokens': 1024,
+                'response_mime_type': 'application/json',
+            }
+        }
+
+        resp = requests.post(
+            GEMINI_CONTENT_URL.format(model=modelo),
+            params={'key': api_key},
+            json=payload,
+            timeout=90
+        )
+        resp.raise_for_status()
+
+        # 4. Parsear respuesta
+        content = resp.json()
+        texto   = content['candidates'][0]['content']['parts'][0]['text']
+        datos   = _parse_json_safe(texto)
+
+        # Normalizar y validar calificaciones
+        resultado = {
+            'cal_amabilidad'  : _validar_cal(datos.get('cal_amabilidad')),
+            'cal_saludo'      : _validar_cal(datos.get('cal_saludo')),
+            'cal_despedida'   : _validar_cal(datos.get('cal_despedida')),
+            'cal_membresia'   : _validar_cal(datos.get('cal_membresia')),
+            'resumen'         : str(datos.get('resumen', ''))[:2000],
+            'tiene_audio'     : 1 if datos.get('tiene_audio') else int(tiene_audio),
+            'modelo_ia'       : modelo,
+        }
+
+        log.info(
+            f"✅ Análisis completado. Calificaciones: "
+            f"amabilidad={resultado['cal_amabilidad']} "
+            f"saludo={resultado['cal_saludo']} "
+            f"despedida={resultado['cal_despedida']} "
+            f"membresía={resultado['cal_membresia']}"
+        )
+        return resultado
+
+    finally:
+        # 5. Siempre limpiar el archivo de Gemini
+        if file_name:
+            _delete_gemini_file(file_name, api_key)
+
+
+def _validar_cal(valor) -> int | None:
+    """Valida y normaliza una calificación 1-10 o retorna None."""
+    if valor is None:
+        return None
+    try:
+        v = int(valor)
+        return max(1, min(10, v))
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_json_safe(texto: str) -> dict:
+    """Extrae JSON de la respuesta de Gemini, tolerando posibles envoltorios."""
+    texto = texto.strip()
+    # Remover posibles bloques markdown ```json ... ```
+    if texto.startswith('```'):
+        lines = texto.split('\n')
+        texto = '\n'.join(lines[1:-1] if lines[-1].strip() == '```' else lines[1:])
+    try:
+        return json.loads(texto)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Gemini retornó JSON inválido: {e}. Raw: {texto[:300]}")

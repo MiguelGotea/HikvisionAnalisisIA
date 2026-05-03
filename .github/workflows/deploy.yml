@@ -1,0 +1,80 @@
+name: 🚀 Deploy HikvisionAnalisisIA → VPS DigitalOcean
+
+# ════════════════════════════════════════════════════════════
+#  PRIMER DEPLOY (ejecutar solo 1 vez via SSH):
+#    ssh root@<VPS_IP>
+#    bash /opt/hikvision-ia/scripts/setup_vps.sh
+#
+#  Secrets requeridos en GitHub (Settings → Secrets → Actions):
+#    DO_HOST     = 198.211.97.243
+#    DO_USER     = root
+#    DO_SSH_KEY  = (contenido de la llave privada SSH)
+#    DO_PATH     = /opt/hikvision-ia
+#
+#  Después del primer setup: todo es push a main. Cero SSH para código.
+# ════════════════════════════════════════════════════════════
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: 📥 Checkout código
+      uses: actions/checkout@v4
+
+    - name: 🔑 Configurar SSH
+      uses: webfactory/ssh-agent@v0.8.0
+      with:
+        ssh-private-key: ${{ secrets.DO_SSH_KEY }}
+
+    - name: 📤 Deploy código → VPS
+      run: |
+        rsync -avz \
+          --exclude='.git/' \
+          --exclude='.github/' \
+          --exclude='.scripts/' \
+          --exclude='.agent/' \
+          --exclude='.gemini/' \
+          --exclude='.gitignore' \
+          --exclude='venv/' \
+          --exclude='__pycache__/' \
+          --exclude='*.pyc' \
+          --exclude='logs/' \
+          --exclude='temp/' \
+          --exclude='.env' \
+          -e "ssh -o StrictHostKeyChecking=no" \
+          ./ \
+          ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }}:${{ secrets.DO_PATH }}/
+
+    - name: 🔄 Actualizar dependencias y reiniciar worker
+      run: |
+        ssh -o StrictHostKeyChecking=no ${{ secrets.DO_USER }}@${{ secrets.DO_HOST }} << 'EOF'
+          set -e
+          cd ${{ secrets.DO_PATH }}
+
+          # Actualizar dependencias Python en el venv
+          venv/bin/pip install -r requirements.txt --quiet
+
+          # Recargar systemd si el service file cambió
+          cp systemd/hikvision-worker.service /etc/systemd/system/hikvision-worker.service
+          systemctl daemon-reload
+
+          # Reiniciar worker
+          systemctl restart hikvision-worker
+          sleep 2
+
+          # Mostrar estado
+          echo "--- Estado del worker ---"
+          systemctl status hikvision-worker --no-pager -l || true
+        EOF
+
+    - name: ✅ Deploy completado
+      run: |
+        echo "✅ HikvisionAnalisisIA desplegado correctamente"
+        echo "📁 Ruta VPS: ${{ secrets.DO_PATH }}"
+        echo "🌐 VPS: ${{ secrets.DO_HOST }}"
+        echo "📊 Ver logs: journalctl -u hikvision-worker -f"
