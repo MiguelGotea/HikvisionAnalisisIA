@@ -207,14 +207,11 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
         # v1beta es OBLIGATORIO para Files API (file_data no existe en v1)
         BASE = "https://generativelanguage.googleapis.com/v1beta/models"
         modelos_a_intentar = [
-            modelo,                  # Lo que devuelve el PHP (gemini-flash-latest, etc.)
-            "gemini-flash-latest",   # Alias que funciona en AIService.php del ERP
-            "gemini-2.0-flash",
-            "gemini-2.0-flash-exp",
-            "gemini-2.0-flash-lite",
-            "gemini-1.5-flash-latest",
-            "gemini-1.5-flash-001",
-            "gemini-1.5-flash-002",
+            modelo,                   # Lo que devuelve el PHP (gemini-2.5-flash)
+            "gemini-2.5-flash",       # Mejor modelo disponible para video
+            "gemini-2.0-flash",       # Fallback
+            "gemini-2.0-flash-001",   # Fallback pinned
+            "gemini-flash-latest",    # Alias genérico
         ]
         # Eliminar duplicados manteniendo orden
         vistos = set()
