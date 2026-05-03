@@ -1,28 +1,28 @@
 """
 downloader.py — Descarga video del DVR vía RTSP sobre túnel SSH usando ffmpeg.
 
-IMPORTANTE: Las horas en la BD están en hora Nicaragua (UTC-6).
-El protocolo RTSP/PSIA de Hikvision requiere timestamps en UTC.
-Se suman 6 horas antes de construir la URL.
+NOTA IMPORTANTE sobre timestamps Hikvision:
+Los DVR HiLook/Hikvision almacenan las grabaciones indexadas por su HORA LOCAL.
+Aunque el formato RTSP usa el sufijo 'Z' (UTC), el firmware de estos DVR
+ignora el timezone y trata el timestamp como hora local.
+Por eso se envía la hora Nicaragua directamente (sin convertir a UTC).
+Enviar UTC causaba 400 Bad Request porque el DVR buscaba video en el tiempo
+equivocado (ej: medianoche en lugar de 18:30).
 """
 
 import subprocess
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from . import config
 from .logger import get_logger
 
 log = get_logger('downloader')
 
-# Offset Nicaragua → UTC
-NI_TO_UTC_HOURS = 6
 
-
-def _ni_time_to_utc(fecha: str, hora: str) -> datetime:
-    """Convierte fecha (YYYY-MM-DD) + hora (HH:MM:SS) Nicaragua a datetime UTC."""
-    dt_ni = datetime.strptime(f"{fecha} {hora}", "%Y-%m-%d %H:%M:%S")
-    return dt_ni + timedelta(hours=NI_TO_UTC_HOURS)
+def _parse_ni_datetime(fecha: str, hora: str) -> datetime:
+    """Parsea fecha (YYYY-MM-DD) + hora (HH:MM:SS) en hora Nicaragua."""
+    return datetime.strptime(f"{fecha} {hora}", "%Y-%m-%d %H:%M:%S")
 
 
 def download(item: dict) -> str:
@@ -48,13 +48,14 @@ def download(item: dict) -> str:
     clave      = item['dvr_clave']
     vps_ip     = item.get('vps_ip', config.VPS_IP)
 
-    # Convertir a UTC para la URL RTSP
-    utc_ini = _ni_time_to_utc(fecha, hora_ini)
-    utc_fin = _ni_time_to_utc(fecha, hora_fin)
+    # Enviar hora Nicaragua directamente — el DVR HiLook ignora el sufijo Z
+    # y busca la grabación por hora local del dispositivo.
+    dt_ini = _parse_ni_datetime(fecha, hora_ini)
+    dt_fin = _parse_ni_datetime(fecha, hora_fin)
 
-    start_str    = utc_ini.strftime("%Y%m%dT%H%M%SZ")
-    end_str      = utc_fin.strftime("%Y%m%dT%H%M%SZ")
-    duracion_seg = max(int((utc_fin - utc_ini).total_seconds()), 10)
+    start_str    = dt_ini.strftime("%Y%m%dT%H%M%SZ")  # Z es formalidad, DVR usa hora local
+    end_str      = dt_fin.strftime("%Y%m%dT%H%M%SZ")
+    duracion_seg = max(int((dt_fin - dt_ini).total_seconds()), 10)
 
     # Construir URL RTSP (túnel VPS expone puerto del DVR)
     rtsp_url = (
@@ -71,7 +72,7 @@ def download(item: dict) -> str:
 
     log.info(
         f"⬇️  Descargando cola={id_cola} pedido={cod_pedido} "
-        f"local={local} {hora_ini}→{hora_fin} (UTC: {start_str}→{end_str}) "
+        f"local={local} {hora_ini}→{hora_fin} (hora NI local → {start_str}→{end_str}) "
         f"puerto={puerto} track={track}"
     )
 
