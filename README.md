@@ -181,6 +181,7 @@ hikvisionanalisisia/
 | Calli         | —   | 9558       | 101   | ⏳ pendiente |
 | Villa Fontana | —   | 9559       | 101   | ⏳ pendiente |
 | León          | —   | 9560       | 101   | ⏳ pendiente |
+| Las Brisas    | 16  | 9561       | 101   | ✅           |
 
 ---
 

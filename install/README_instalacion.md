@@ -49,6 +49,7 @@ Copiar el archivo `.bat` correspondiente a la sucursal a `C:\`:
 | Calli         | `tunel_dvr_calli.bat`       | 9558       |
 | Villa Fontana | `tunel_dvr_villafontana.bat`| 9559       |
 | León          | `tunel_dvr_leon.bat`        | 9560       |
+| Las Brisas    | `tunel_dvr_lasbrisas.bat`    | 9561       |
 
 ---
 

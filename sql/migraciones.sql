@@ -20,8 +20,17 @@ SET
   tunel_activo    = 1
 WHERE cod_sucursal = 10;
 
+-- Datos de Las Brisas (cod_sucursal=16)
+UPDATE DVR_Sucursales
+SET
+  canal_caja      = 101,
+  puerto_rtsp_vps = 9561,
+  tunel_activo    = 1
+WHERE cod_sucursal = 16;
+
+
 -- Puertos reservados para las demás sucursales (sin túnel aún)
--- Masaya=9555, Central=9556, Estelí=9557, Calli=9558, VillaFontana=9559, León=9560
+-- Masaya=9555, Central=9556, Estelí=9557, Calli=9558, VillaFontana=9559, León=9560, Las Brisas=9561
 -- Actualizar puerto_rtsp_vps y canal_caja por cada sucursal cuando se configure su túnel.
 
 
