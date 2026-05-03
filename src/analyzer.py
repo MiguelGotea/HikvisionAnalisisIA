@@ -217,8 +217,13 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
             }],
             'generationConfig': {
                 'temperature': 0.1,
-                'maxOutputTokens': 1024,
+                'maxOutputTokens': 4096,        # 2.5-flash usa tokens de pensamiento interno
                 'response_mime_type': 'application/json',
+            },
+            # Desactivar pensamiento interno — no necesario para clasificación simple
+            # Evita que los tokens de "thinking" consuman el límite del JSON de salida
+            'thinkingConfig': {
+                'thinkingBudget': 0
             }
         }
 
