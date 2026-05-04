@@ -53,6 +53,38 @@ def encolar_y_esperar(cod_pedido: int, local: str) -> int:
     return resp['id_cola']
 
 
+def obtener_item_cola(id_cola: int) -> dict | None:
+    """
+    Obtiene un item específico de la cola por su id (sin marcarlo como procesando).
+    Llama a worker_status.php que ya expone los datos del item.
+    Fallback: llama a pedidos_cola.php buscando el id específico.
+    """
+    import requests
+    headers = {'X-WSP-Token': config.API_TOKEN}
+
+    # Intentar obtener directamente por id usando el endpoint de detalle
+    url = f"{config.API_BASE_URL}/obtener_item_cola.php"
+    try:
+        r = requests.get(url, headers=headers, params={'id': id_cola}, timeout=15)
+        if r.status_code == 200:
+            resp = r.json()
+            if resp.get('success') and resp.get('item'):
+                return resp['item']
+    except Exception:
+        pass
+
+    log.warning("obtener_item_cola.php no disponible, usando pedidos_cola.php como fallback...")
+    # Fallback: pedir la cola y buscar nuestro id
+    url2 = f"{config.API_BASE_URL}/pedidos_cola.php"
+    r2 = requests.get(url2, headers=headers, params={'limit': 10}, timeout=15)
+    r2.raise_for_status()
+    items = r2.json().get('items', [])
+    for it in items:
+        if it['id'] == id_cola:
+            return it
+    return None
+
+
 def procesar_directo(cod_pedido: int, local: str, solo_descargar: bool = False):
     """
     Procesa el pedido directamente (sin pasar por el worker daemon).
@@ -65,18 +97,17 @@ def procesar_directo(cod_pedido: int, local: str, solo_descargar: bool = False):
 
     id_cola = encolar_y_esperar(cod_pedido, local)
 
-    # Obtener el item de la cola
-    url = f"{config.API_BASE_URL}/pedidos_cola.php"
-    headers = {'X-WSP-Token': config.API_TOKEN}
-    r = requests.get(url, headers=headers, params={'limit': 1}, timeout=15)
-    r.raise_for_status()
-    items = r.json().get('items', [])
+    # Obtener el item de cola por su id específico
+    item = obtener_item_cola(id_cola)
 
-    if not items:
-        log.error("No se pudo obtener el item de la cola. ¿Está el worker corriendo y ya lo tomó?")
+    if not item:
+        log.error(f"No se pudo obtener el item id={id_cola} de la cola.")
+        log.error("Causas posibles:")
+        log.error("  1. El worker ya lo tomó y marcó como 'procesando' (no sale en pedidos_cola.php)")
+        log.error("  2. worker.flag.json tiene worker_habilitado=false")
+        log.error("  3. La fecha del pedido no coincide con CURDATE() en la BD")
+        log.error(f"  → Verifica en BD: SELECT * FROM hikvision_cola_analisis WHERE id={id_cola}")
         return
-
-    item = items[0]
 
     # 1. Descargar
     log.info("\n--- PASO 1: DESCARGA ---")
