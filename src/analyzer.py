@@ -1,14 +1,12 @@
 """
 analyzer.py — Análisis de video de atención al cliente con Gemini 2.5 Flash.
 
-Flujo:
-1. Subir video a Gemini Files API (resumable upload)
-2. Esperar estado ACTIVE (Gemini procesa el video)
-3. Enviar prompt de análisis con file_uri
-4. Parsear respuesta JSON con calificaciones 1-10
-5. Eliminar archivo de Gemini (limpieza de cuota)
-
-Modelo: gemini-2.5-flash (v1beta, Files API para video multimodal)
+Evalúa el Protocolo Oficial de Atención Pitaya (10 pasos, 5 grupos):
+  Grupo 1 — Bienvenida    (Paso 1)
+  Grupo 2 — Asesoría      (Pasos 2-4, marcados * = opcional en fila larga)
+  Grupo 3 — Membresía     (Paso 5)
+  Grupo 4 — Cobro         (Pasos 6-8)
+  Grupo 5 — Entrega       (Pasos 9-10)
 """
 
 import requests
@@ -22,23 +20,18 @@ log = get_logger('analyzer')
 
 GEMINI_UPLOAD_URL  = "https://generativelanguage.googleapis.com/upload/v1beta/files"
 GEMINI_CONTENT_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-# file_name retorna "files/abc123" — usar v1beta/{name} para no duplicar el prefijo
 GEMINI_FILES_BASE  = "https://generativelanguage.googleapis.com/v1beta/{name}"
 
 
-# ── Upload ───────────────────────────────────────────────────
+# ── Upload ────────────────────────────────────────────────────
 
 def _upload_video(video_path: str, api_key: str) -> tuple[str, str]:
-    """
-    Sube el video a Gemini Files API (resumable upload).
-    Retorna (file_uri, file_name).
-    """
+    """Sube el video a Gemini Files API. Retorna (file_uri, file_name)."""
     file_size    = os.path.getsize(video_path)
     display_name = os.path.basename(video_path)
 
     log.info(f"📤 Subiendo video a Gemini ({file_size/(1024*1024):.1f} MB)...")
 
-    # Paso 1: Iniciar upload resumable
     init_resp = requests.post(
         f"{GEMINI_UPLOAD_URL}?key={api_key}",
         headers={
@@ -57,7 +50,6 @@ def _upload_video(video_path: str, api_key: str) -> tuple[str, str]:
     if not upload_url:
         raise RuntimeError("Gemini no devolvió upload URL en el header")
 
-    # Paso 2: Subir bytes
     with open(video_path, 'rb') as f:
         video_bytes = f.read()
 
@@ -75,7 +67,7 @@ def _upload_video(video_path: str, api_key: str) -> tuple[str, str]:
 
     file_info = upload_resp.json()
     file_uri  = file_info.get('file', {}).get('uri')
-    file_name = file_info.get('file', {}).get('name')   # "files/abc123"
+    file_name = file_info.get('file', {}).get('name')
 
     if not file_uri:
         raise RuntimeError(f"Gemini no retornó file URI. Respuesta: {file_info}")
@@ -87,11 +79,8 @@ def _upload_video(video_path: str, api_key: str) -> tuple[str, str]:
 
 
 def _wait_for_active(file_name: str, api_key: str, max_wait: int = 300):
-    """
-    Espera hasta que el archivo esté ACTIVE.
-    GET /v1beta/{file_name} retorna el File object directamente (state en raíz, no en 'file').
-    """
-    deadline     = time.time() + max_wait
+    """Espera hasta que el archivo esté ACTIVE. State está en la raíz del response."""
+    deadline      = time.time() + max_wait
     ultimo_estado = ''
     while time.time() < deadline:
         try:
@@ -108,9 +97,7 @@ def _wait_for_active(file_name: str, api_key: str, max_wait: int = 300):
                 if state == 'ACTIVE':
                     return
                 if state == 'FAILED':
-                    raise RuntimeError(f"Gemini FAILED al procesar el video.")
-            else:
-                log.warning(f"   Polling Gemini HTTP {resp.status_code}")
+                    raise RuntimeError("Gemini FAILED al procesar el video.")
         except RuntimeError:
             raise
         except Exception as e:
@@ -120,7 +107,7 @@ def _wait_for_active(file_name: str, api_key: str, max_wait: int = 300):
 
 
 def _delete_gemini_file(file_name: str, api_key: str):
-    """Elimina el archivo de Gemini para liberar cuota (48h de expiración de todos modos)."""
+    """Elimina el archivo de Gemini para liberar cuota."""
     try:
         requests.delete(
             GEMINI_FILES_BASE.format(name=file_name),
@@ -134,44 +121,119 @@ def _delete_gemini_file(file_name: str, api_key: str):
 
 # ── Prompts ───────────────────────────────────────────────────
 
-SYSTEM_PROMPT = """Eres un evaluador experto en atención al cliente para una cadena de batidos y bebidas naturales.
-Analizarás un clip de video de cámara de seguridad de una caja registradora.
-Tu tarea es evaluar la calidad de atención al cliente del personal.
+SYSTEM_PROMPT = """Eres un evaluador experto en atención al cliente de Pitaya, una cadena de batidos y bebidas naturales de Nicaragua.
+Analizarás un clip de video (y audio si está disponible) de la cámara de seguridad de la caja registradora.
 
-Responde ÚNICAMENTE con un JSON válido, sin markdown, sin texto adicional."""
+Tu tarea es evaluar el cumplimiento del Protocolo Oficial de Atención al Cliente de Pitaya, que tiene 10 pasos agrupados en 5 categorías.
 
-USER_PROMPT_TEMPLATE = """Analiza este video de cámara de seguridad de la caja registradora.
+REGLAS DE EVALUACIÓN:
+- Califica cada PASO del 1 al 10, donde 10 = cumplimiento perfecto, 1 = no cumplió.
+- Asigna null si el paso NO ES OBSERVABLE desde esta cámara (ej: el cliente salió del cuadro, no hay audio, la acción ocurre fuera de cámara).
+- La calificación del GRUPO es el promedio de los pasos observables de ese grupo.
+- El Grupo 2 (Asesoría) puede omitirse si hay una fila larga; en ese caso califícalo igualmente pero con contexto.
+- Sé objetivo y basa cada calificación en evidencia observada en el video.
+
+Responde ÚNICAMENTE con JSON válido, sin markdown ni texto adicional."""
+
+
+USER_PROMPT_TEMPLATE = """Analiza el siguiente clip de video de cámara de caja registradora de Pitaya.
+
 Sucursal: {sucursal}
-Fecha/hora Nicaragua: {fecha} {hora_inicio} → {hora_fin}
-Video tiene audio: {tiene_audio}
+Fecha y hora (Nicaragua): {fecha} de {hora_inicio} a {hora_fin}
+Duración del clip: {duracion}
+Audio disponible: {tiene_audio}
 
-Evalúa al empleado en las siguientes categorías con una calificación del 1 al 10:
-- amabilidad: ¿El trato al cliente fue amable, sonriente y respetuoso?
-- saludo: ¿Saludó al cliente al acercarse a la caja?
-- despedida: ¿Se despidió del cliente al finalizar la atención?
-- oferta_membresia: ¿Ofreció o mencionó el programa de membresía/puntos del club?
+== PROTOCOLO DE ATENCIÓN PITAYA (10 pasos) ==
 
-Si el video no muestra claramente una interacción cliente-empleado, asigna null a esa categoría.
+GRUPO 1 — BIENVENIDA (Paso 1):
+  paso_1_saludo_inmediato: ¿Saludó de forma inmediata al entrar el cliente?
+  paso_1_sonrisa_contacto: ¿Con sonrisa genuina y contacto visual?
+  paso_1_energia_positiva: ¿Transmitió energía positiva y cercanía?
 
-Responde SOLO con este JSON (sin markdown):
+GRUPO 2 — ASESORÍA Y VENTA (Pasos 2-4) — marcado con (*), puede omitirse en fila larga:
+  paso_2_escucha_activa:  ¿Escuchó activamente al cliente e identificó sus necesidades?
+  paso_2_recomendo:       ¿Recomendó productos o la promoción/combo de temporada?
+  paso_3_personalizo:     ¿Ofreció opciones de personalización (endulzante, toppings de waffles)?
+  paso_4_acompanante:     ¿Sugirió un acompañante (galletas de avena, frutos secos Pitaya) o promoción vigente sin presionar?
+
+GRUPO 3 — MEMBRESÍA CLUB PITAYA (Paso 5):
+  paso_5_pregunto_membresia:  ¿Preguntó si el cliente tiene membresía del Club Pitaya?
+  paso_5_explico_beneficios:  ¿Explicó brevemente los beneficios si el cliente no tenía membresía?
+
+GRUPO 4 — PROCESO DE COBRO (Pasos 6-8):
+  paso_6_pidio_nombre:    ¿Solicitó el nombre del cliente para la orden?
+  paso_6_indico_monto:    ¿Indicó el monto total y los métodos de pago disponibles?
+  paso_7_repitio_orden:   ¿Repitió exactamente la orden del cliente para confirmar?
+  paso_8_pregunto_propina:¿Preguntó si el cliente desea agregar propina?
+  paso_8b_entrego_factura:¿Entregó la factura al cliente?
+
+GRUPO 5 — ENTREGA Y DESPEDIDA (Pasos 9-10):
+  paso_9_llamo_por_nombre:  ¿Llamó al cliente por su nombre al entregar el producto?
+  paso_9_menciono_producto: ¿Mencionó los productos al hacer la entrega?
+  paso_9_sonrisa_entrega:   ¿Entregó el producto con sonrisa?
+  paso_10_despedida_cordial:¿Se despidió cordialmente invitando al cliente a regresar?
+
+== RESPUESTA REQUERIDA ==
+
+Responde SOLO con este JSON (sin markdown, valores exactos):
 {{
-  "cal_amabilidad": <1-10 o null>,
-  "cal_saludo": <1-10 o null>,
-  "cal_despedida": <1-10 o null>,
-  "cal_membresia": <1-10 o null>,
-  "resumen": "<2-3 oraciones describiendo la interacción observada>",
+  "grupos": {{
+    "bienvenida": {{
+      "cal_grupo": <1-10 promedio observable o null>,
+      "pasos": {{
+        "paso_1_saludo_inmediato": {{"cal": <1-10 o null>, "obs": "<observación breve en español>"}},
+        "paso_1_sonrisa_contacto": {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_1_energia_positiva": {{"cal": <1-10 o null>, "obs": "<observación breve>"}}
+      }}
+    }},
+    "asesoria": {{
+      "cal_grupo": <1-10 o null>,
+      "pasos": {{
+        "paso_2_escucha_activa":  {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_2_recomendo":       {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_3_personalizo":     {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_4_acompanante":     {{"cal": <1-10 o null>, "obs": "<observación breve>"}}
+      }}
+    }},
+    "membresia": {{
+      "cal_grupo": <1-10 o null>,
+      "pasos": {{
+        "paso_5_pregunto_membresia":  {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_5_explico_beneficios":  {{"cal": <1-10 o null>, "obs": "<observación breve>"}}
+      }}
+    }},
+    "cobro": {{
+      "cal_grupo": <1-10 o null>,
+      "pasos": {{
+        "paso_6_pidio_nombre":    {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_6_indico_monto":    {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_7_repitio_orden":   {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_8_pregunto_propina":{{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_8b_entrego_factura":{{"cal": <1-10 o null>, "obs": "<observación breve>"}}
+      }}
+    }},
+    "entrega": {{
+      "cal_grupo": <1-10 o null>,
+      "pasos": {{
+        "paso_9_llamo_por_nombre":  {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_9_menciono_producto": {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_9_sonrisa_entrega":   {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
+        "paso_10_despedida_cordial":{{"cal": <1-10 o null>, "obs": "<observación breve>"}}
+      }}
+    }}
+  }},
+  "resumen": "<3-4 oraciones describiendo el desempeño general, puntos fuertes y áreas de mejora>",
   "tiene_audio": <true o false según lo que percibiste>
 }}"""
 
 
 # ── Análisis principal ────────────────────────────────────────
 
-def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: bool = False) -> dict:
+def analyze(video_path: str, gemini_key_info: dict, item: dict,
+            tiene_audio: bool = False, duracion_segundos: int = 0) -> dict:
     """
-    Analiza el video con Gemini y retorna el dict con resultados.
-
-    gemini_key_info: {'api_key': '...', 'modelo': 'gemini-2.5-flash', ...}
-    item: item de la cola con fecha, hora_inicio, hora_fin, local_codigo, etc.
+    Analiza el video con el Protocolo Oficial Pitaya (5 grupos, 10 pasos).
+    Retorna dict con grupos, cal_promedio, detalle_json y resumen.
     """
     api_key = gemini_key_info['api_key']
     modelo  = gemini_key_info.get('modelo', 'gemini-2.5-flash')
@@ -180,21 +242,21 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
     file_name = None
 
     try:
-        # 1. Subir video
         file_uri, file_name = _upload_video(video_path, api_key)
 
-        # 2. Construir prompt
         sucursal_nombre = item.get('sucursal_nombre') or f"Local {item['local_codigo']}"
+        duracion_str    = f"{duracion_segundos}s" if duracion_segundos else "desconocida"
+
         user_prompt = USER_PROMPT_TEMPLATE.format(
             sucursal    = sucursal_nombre,
             fecha       = item['fecha'],
             hora_inicio = item['hora_inicio'],
             hora_fin    = item['hora_fin'],
+            duracion    = duracion_str,
             tiene_audio = 'Sí' if tiene_audio else 'No',
         )
 
-        # 3. Llamar generateContent (v1beta obligatorio para file_data)
-        log.info(f"🤖 Analizando con {modelo}...")
+        log.info(f"🤖 Analizando con {modelo} (Protocolo 5 grupos)...")
         payload = {
             'contents': [{
                 'role': 'user',
@@ -207,7 +269,7 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
                 'temperature': 0.1,
                 'maxOutputTokens': 4096,
                 'response_mime_type': 'application/json',
-                'thinkingConfig': {'thinkingBudget': 0},   # Dentro de generationConfig
+                'thinkingConfig': {'thinkingBudget': 0},
             },
         }
 
@@ -219,28 +281,40 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
         )
         resp.raise_for_status()
 
-        # 4. Parsear respuesta
         content = resp.json()
         texto   = content['candidates'][0]['content']['parts'][0]['text']
         datos   = _parse_json_safe(texto)
 
-        # 5. Normalizar calificaciones
+        # Extraer calificaciones de grupos
+        grupos = datos.get('grupos', {})
+        cal_bienvenida = _cal_grupo(grupos.get('bienvenida'))
+        cal_asesoria   = _cal_grupo(grupos.get('asesoria'))
+        cal_membresia  = _cal_grupo(grupos.get('membresia'))
+        cal_cobro      = _cal_grupo(grupos.get('cobro'))
+        cal_entrega    = _cal_grupo(grupos.get('entrega'))
+
+        # Calcular promedio de grupos evaluados
+        vals = [v for v in [cal_bienvenida, cal_asesoria, cal_membresia, cal_cobro, cal_entrega] if v is not None]
+        cal_promedio = round(sum(vals) / len(vals), 2) if vals else None
+
         resultado = {
-            'cal_amabilidad' : _validar_cal(datos.get('cal_amabilidad')),
-            'cal_saludo'     : _validar_cal(datos.get('cal_saludo')),
-            'cal_despedida'  : _validar_cal(datos.get('cal_despedida')),
-            'cal_membresia'  : _validar_cal(datos.get('cal_membresia')),
-            'resumen'        : str(datos.get('resumen', ''))[:2000],
-            'tiene_audio'    : 1 if datos.get('tiene_audio') else int(tiene_audio),
-            'modelo_ia'      : modelo,
+            'grupo_bienvenida' : cal_bienvenida,
+            'grupo_asesoria'   : cal_asesoria,
+            'grupo_membresia'  : cal_membresia,
+            'grupo_cobro'      : cal_cobro,
+            'grupo_entrega'    : cal_entrega,
+            'cal_promedio'     : cal_promedio,
+            'detalle_json'     : json.dumps(datos, ensure_ascii=False),
+            'resumen'          : str(datos.get('resumen', ''))[:2000],
+            'tiene_audio'      : 1 if datos.get('tiene_audio') else int(tiene_audio),
+            'modelo_ia'        : modelo,
         }
 
         log.info(
-            f"✅ Análisis completado. Calificaciones: "
-            f"amabilidad={resultado['cal_amabilidad']} "
-            f"saludo={resultado['cal_saludo']} "
-            f"despedida={resultado['cal_despedida']} "
-            f"membresía={resultado['cal_membresia']}"
+            f"✅ Análisis completado. Grupos: "
+            f"bienvenida={cal_bienvenida} asesoría={cal_asesoria} "
+            f"membresía={cal_membresia} cobro={cal_cobro} entrega={cal_entrega} "
+            f"→ promedio={cal_promedio}"
         )
         return resultado
 
@@ -250,6 +324,25 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict, tiene_audio: boo
 
 
 # ── Helpers ───────────────────────────────────────────────────
+
+def _cal_grupo(grupo_data: dict | None) -> int | None:
+    """
+    Extrae la calificación de un grupo.
+    Usa cal_grupo si la IA lo calculó; si no, promedia los pasos observables.
+    """
+    if not grupo_data:
+        return None
+
+    # Intentar usar la calificación que calculó Gemini
+    cal = grupo_data.get('cal_grupo')
+    if cal is not None:
+        return _validar_cal(cal)
+
+    # Calcular como promedio de pasos no-null
+    pasos = grupo_data.get('pasos', {})
+    vals  = [_validar_cal(p.get('cal')) for p in pasos.values() if p.get('cal') is not None]
+    return round(sum(vals) / len(vals)) if vals else None
+
 
 def _validar_cal(valor) -> int | None:
     """Valida y normaliza calificación 1-10."""
@@ -263,7 +356,7 @@ def _validar_cal(valor) -> int | None:
 
 
 def _parse_json_safe(texto: str) -> dict:
-    """Extrae JSON de la respuesta tolerando envoltorios markdown."""
+    """Extrae JSON tolerando envoltorios markdown."""
     texto = texto.strip()
     if texto.startswith('```'):
         lines = texto.split('\n')

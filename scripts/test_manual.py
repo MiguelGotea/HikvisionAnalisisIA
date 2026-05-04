@@ -133,10 +133,11 @@ def procesar_directo(cod_pedido: int, local: str, solo_descargar: bool = False):
     # 4. Analizar
     log.info("\n--- PASO 4: ANÁLISIS IA ---")
     resultado = analyzer.analyze(
-        video_path      = video_small,
-        gemini_key_info = gemini_info,
-        item            = item,
-        tiene_audio     = tiene_audio,
+        video_path        = video_small,
+        gemini_key_info   = gemini_info,
+        item              = item,
+        tiene_audio       = tiene_audio,
+        duracion_segundos = duracion_seg,
     )
     resultado['duracion_segundos'] = duracion_seg
 
@@ -149,15 +150,19 @@ def procesar_directo(cod_pedido: int, local: str, solo_descargar: bool = False):
         if p and os.path.exists(p):
             os.remove(p)
 
-    # Mostrar resumen
-    log.info("\n" + "="*50)
-    log.info("RESULTADO FINAL:")
-    log.info(f"  Amabilidad   : {resultado['cal_amabilidad']}/10")
-    log.info(f"  Saludo       : {resultado['cal_saludo']}/10")
-    log.info(f"  Despedida    : {resultado['cal_despedida']}/10")
-    log.info(f"  Membresía    : {resultado['cal_membresia']}/10")
-    log.info(f"  Resumen      : {resultado['resumen']}")
-    log.info("="*50)
+    # Mostrar resumen — Protocolo 5 grupos
+    log.info("\n" + "="*55)
+    log.info("RESULTADO FINAL — Protocolo Pitaya (5 grupos):")
+    log.info(f"  Bienvenida    : {resultado['grupo_bienvenida']}/10   (Paso 1: saludo+sonrisa)")
+    log.info(f"  Asesoría      : {resultado['grupo_asesoria']}/10   (Pasos 2-4: escucha, recomienda, acompañante)")
+    log.info(f"  Membresía     : {resultado['grupo_membresia']}/10   (Paso 5: Club Pitaya)")
+    log.info(f"  Cobro         : {resultado['grupo_cobro']}/10   (Pasos 6-8: nombre, monto, repite, propina)")
+    log.info(f"  Entrega       : {resultado['grupo_entrega']}/10   (Pasos 9-10: entrega+despedida)")
+    log.info(f"  ─────────────────────────────────────────────")
+    log.info(f"  PROMEDIO      : {resultado['cal_promedio']}/10")
+    log.info(f"  Resumen       : {resultado['resumen']}")
+    log.info("="*55)
+
 
 
 def main():
