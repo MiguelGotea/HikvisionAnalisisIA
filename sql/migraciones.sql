@@ -46,9 +46,15 @@ CREATE TABLE IF NOT EXISTS hikvision_cola_analisis (
                                NOT NULL DEFAULT 'pendiente',
   tipo            ENUM('automatico','manual')
                                NOT NULL DEFAULT 'automatico',
-  prioridad       TINYINT      NOT NULL DEFAULT 5            COMMENT '1=urgente (manual), 5=normal (auto)',
+  prioridad       TINYINT      NOT NULL DEFAULT 5,
   intentos        TINYINT      NOT NULL DEFAULT 0,
   error_mensaje   TEXT             DEFAULT NULL,
+  -- Contexto de membresía detectado al encolar (regla de negocio)
+  -- sin_membresia: CodCliente=0, evaluar si ofreció
+  -- vendida:       Vendió membresía en este pedido → auto 10
+  -- ya_tenia:      Cliente ya tenía membresía → null (no aplica)
+  membresia_contexto ENUM('sin_membresia','vendida','ya_tenia')
+                               NOT NULL DEFAULT 'sin_membresia',
   created_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at      TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
@@ -97,11 +103,14 @@ CREATE TABLE hikvision_analisis_ia_atencion (
   -- Estructura JSON: ver README. Permite cambiar pasos sin modificar la tabla.
   detalle_json      JSON             DEFAULT NULL COMMENT 'Breakdown completo por paso del protocolo',
 
-  resumen           TEXT             DEFAULT NULL COMMENT 'Resumen narrativo del análisis en español',
-  tiene_audio       TINYINT(1)       DEFAULT 0    COMMENT '1=audio detectado en el clip',
+  resumen           TEXT             DEFAULT NULL,
+  tiene_audio       TINYINT(1)       DEFAULT 0,
   duracion_segundos INT              DEFAULT NULL,
-  modelo_ia         VARCHAR(100)     DEFAULT NULL COMMENT 'Modelo Gemini usado',
-  version_protocolo VARCHAR(20)      DEFAULT '1.0' COMMENT 'Versión del protocolo de evaluación',
+  modelo_ia         VARCHAR(100)     DEFAULT NULL,
+  -- Contexto de membresía aplicado (heredado de la cola)
+  membresia_contexto ENUM('sin_membresia','vendida','ya_tenia')
+                                     DEFAULT 'sin_membresia',
+  version_protocolo VARCHAR(20)      DEFAULT '1.0',
   created_at        TIMESTAMP    NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
   INDEX idx_cod_pedido   (cod_pedido),

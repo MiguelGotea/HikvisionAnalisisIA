@@ -156,7 +156,7 @@ GRUPO 2 — ASESORÍA Y VENTA (Pasos 2-4) — marcado con (*), puede omitirse en
   paso_3_personalizo:     ¿Ofreció opciones de personalización (endulzante, toppings de waffles)?
   paso_4_acompanante:     ¿Sugirió un acompañante (galletas de avena, frutos secos Pitaya) o promoción vigente sin presionar?
 
-GRUPO 3 — MEMBRESÍA CLUB PITAYA (Paso 5):
+GRUPO 3 — MEMBRESÍA CLUB PITAYA (Paso 5) — {membresia_instruccion}:
   paso_5_pregunto_membresia:  ¿Preguntó si el cliente tiene membresía del Club Pitaya?
   paso_5_explico_beneficios:  ¿Explicó brevemente los beneficios si el cliente no tenía membresía?
 
@@ -226,6 +226,13 @@ Responde SOLO con este JSON (sin markdown, valores exactos):
   "tiene_audio": <true o false según lo que percibiste>
 }}"""
 
+# Instrucciones de membresía por contexto
+_MEMBRESIA_INSTRUCCION = {
+    'sin_membresia': 'EVALUAR NORMALMENTE — el cliente no tiene membresía, verificar si el empleado la ofreció',
+    'vendida':       'AUTO-CALIFICADO 10 — el empleado vendió la membresía en este pedido (incluir en JSON con cal_grupo=10)',
+    'ya_tenia':      'NO APLICA — el cliente ya tenía membresía, asignar null a todos los pasos de este grupo',
+}
+
 
 # ── Análisis principal ────────────────────────────────────────
 
@@ -244,16 +251,21 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict,
     try:
         file_uri, file_name = _upload_video(video_path, api_key)
 
-        sucursal_nombre = item.get('sucursal_nombre') or f"Local {item['local_codigo']}"
-        duracion_str    = f"{duracion_segundos}s" if duracion_segundos else "desconocida"
+        sucursal_nombre     = item.get('sucursal_nombre') or f"Local {item['local_codigo']}"
+        duracion_str        = f"{duracion_segundos}s" if duracion_segundos else "desconocida"
+        membresia_contexto  = item.get('membresia_contexto', 'sin_membresia')
+        membresia_instruccion = _MEMBRESIA_INSTRUCCION.get(membresia_contexto, _MEMBRESIA_INSTRUCCION['sin_membresia'])
+
+        log.info(f"   Contexto membresía: {membresia_contexto}")
 
         user_prompt = USER_PROMPT_TEMPLATE.format(
-            sucursal    = sucursal_nombre,
-            fecha       = item['fecha'],
-            hora_inicio = item['hora_inicio'],
-            hora_fin    = item['hora_fin'],
-            duracion    = duracion_str,
-            tiene_audio = 'Sí' if tiene_audio else 'No',
+            sucursal              = sucursal_nombre,
+            fecha                 = item['fecha'],
+            hora_inicio           = item['hora_inicio'],
+            hora_fin              = item['hora_fin'],
+            duracion              = duracion_str,
+            tiene_audio           = 'Sí' if tiene_audio else 'No',
+            membresia_instruccion = membresia_instruccion,
         )
 
         log.info(f"🤖 Analizando con {modelo} (Protocolo 5 grupos)...")
@@ -289,31 +301,41 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict,
         grupos = datos.get('grupos', {})
         cal_bienvenida = _cal_grupo(grupos.get('bienvenida'))
         cal_asesoria   = _cal_grupo(grupos.get('asesoria'))
-        cal_membresia  = _cal_grupo(grupos.get('membresia'))
         cal_cobro      = _cal_grupo(grupos.get('cobro'))
         cal_entrega    = _cal_grupo(grupos.get('entrega'))
 
-        # Calcular promedio de grupos evaluados
+        # Membresía: aplicar regla de negocio según contexto
+        if membresia_contexto == 'vendida':
+            cal_membresia = 10   # Vendió membresía = la ofreció perfectamente
+            log.info("   Membresía: auto 10 (vendió membresía en este pedido)")
+        elif membresia_contexto == 'ya_tenia':
+            cal_membresia = None  # Cliente ya tenía membresía, no aplica evaluar
+            log.info("   Membresía: null (cliente ya tenía membresía, no aplica)")
+        else:
+            cal_membresia = _cal_grupo(grupos.get('membresia'))  # Evaluar normalmente
+
+        # Calcular promedio solo de grupos evaluados (no-null)
         vals = [v for v in [cal_bienvenida, cal_asesoria, cal_membresia, cal_cobro, cal_entrega] if v is not None]
         cal_promedio = round(sum(vals) / len(vals), 2) if vals else None
 
         resultado = {
-            'grupo_bienvenida' : cal_bienvenida,
-            'grupo_asesoria'   : cal_asesoria,
-            'grupo_membresia'  : cal_membresia,
-            'grupo_cobro'      : cal_cobro,
-            'grupo_entrega'    : cal_entrega,
-            'cal_promedio'     : cal_promedio,
-            'detalle_json'     : json.dumps(datos, ensure_ascii=False),
-            'resumen'          : str(datos.get('resumen', ''))[:2000],
-            'tiene_audio'      : 1 if datos.get('tiene_audio') else int(tiene_audio),
-            'modelo_ia'        : modelo,
+            'grupo_bienvenida'   : cal_bienvenida,
+            'grupo_asesoria'     : cal_asesoria,
+            'grupo_membresia'    : cal_membresia,
+            'grupo_cobro'        : cal_cobro,
+            'grupo_entrega'      : cal_entrega,
+            'cal_promedio'       : cal_promedio,
+            'membresia_contexto' : membresia_contexto,
+            'detalle_json'       : json.dumps(datos, ensure_ascii=False),
+            'resumen'            : str(datos.get('resumen', ''))[:2000],
+            'tiene_audio'        : 1 if datos.get('tiene_audio') else int(tiene_audio),
+            'modelo_ia'          : modelo,
         }
 
         log.info(
             f"✅ Análisis completado. Grupos: "
             f"bienvenida={cal_bienvenida} asesoría={cal_asesoria} "
-            f"membresía={cal_membresia} cobro={cal_cobro} entrega={cal_entrega} "
+            f"membresía={cal_membresia}({membresia_contexto}) cobro={cal_cobro} entrega={cal_entrega} "
             f"→ promedio={cal_promedio}"
         )
         return resultado
