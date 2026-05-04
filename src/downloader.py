@@ -79,10 +79,14 @@ def download(item: dict) -> str:
     # DVR Hikvision/HiLook transmite audio en pcm_mulaw (G.711) que NO es
     # compatible con contenedor MP4. Se transcodifica a AAC (sí compatible).
     # Fallback sin audio si el codec del DVR es aún más exótico.
-    def _build_cmd(audio_flags: list) -> list:
+    # stimeout: tiempo máximo de espera de conexión RTSP en microsegundos (30s).
+    def _build_cmd(audio_flags: list, extra_input_flags: list = None) -> list:
+        input_flags = extra_input_flags or []
         return [
             "ffmpeg", "-y",
             "-rtsp_transport", "tcp",
+            "-stimeout", "30000000",          # 30s timeout de conexión RTSP
+            *input_flags,
             "-i", rtsp_url,
             "-c:v", "copy",
             *audio_flags,
@@ -91,13 +95,33 @@ def download(item: dict) -> str:
         ]
 
     intentos = [
-        (["-c:a", "aac", "-b:a", "64k", "-ac", "1"], "audio AAC"),
-        (["-an"],                                       "sin audio"),
+        # intento 1: AAC normal
+        (["-c:a", "aac", "-b:a", "64k", "-ac", "1"], [],                              "audio AAC"),
+        # intento 2: sin audio
+        (["-an"],                                      [],                              "sin audio"),
+        # intento 3: forzar solo video (algunos DVR no declaran audio track)
+        (["-an"],                                      ["-allowed_media_types", "video"], "solo video"),
+        # intento 4: UDP en lugar de TCP (fallback de transporte)
+        (["-an"],                                      [],                              "UDP sin audio"),
     ]
 
     result = None
-    for audio_flags, descripcion_audio in intentos:
-        cmd = _build_cmd(audio_flags)
+    for idx, (audio_flags, extra_input_flags, descripcion_audio) in enumerate(intentos):
+        # El intento 3 (UDP) usa rtsp_transport=udp en lugar de tcp
+        if descripcion_audio == "UDP sin audio":
+            cmd = [
+                "ffmpeg", "-y",
+                "-rtsp_transport", "udp",
+                "-stimeout", "30000000",
+                "-i", rtsp_url,
+                "-an",
+                "-c:v", "copy",
+                "-t", str(duracion_seg),
+                ruta_salida
+            ]
+        else:
+            cmd = _build_cmd(audio_flags, extra_input_flags)
+
         log.info(f"   Intentando con {descripcion_audio}...")
         try:
             result = subprocess.run(
@@ -107,21 +131,29 @@ def download(item: dict) -> str:
                 timeout=timeout_total
             )
         except subprocess.TimeoutExpired:
-            raise RuntimeError(
-                f"Timeout ({timeout_total}s) descargando cola={id_cola}. "
-                f"¿El túnel SSH está activo en el local?"
-            )
+            log.warning(f"   ⚠️  Timeout en intento '{descripcion_audio}', continuando...")
+            # Crear resultado dummy para continuar
+            class _TimeoutResult:
+                returncode = -1
+                stderr = f"Timeout tras {timeout_total}s"
+            result = _TimeoutResult()
+
         if result.returncode == 0:
             log.info(f"   ✅ Descarga exitosa ({descripcion_audio})")
             break
-        log.warning(f"   ⚠️  Falló con {descripcion_audio}, probando siguiente...")
+        # Mostrar stderr resumido para cada intento fallido
+        stderr_preview = (result.stderr or "")[-300:].strip()
+        log.warning(f"   ⚠️  Falló con {descripcion_audio} (código {result.returncode}): {stderr_preview}")
 
     if result.returncode != 0:
-        # Extraer último fragmento relevante del stderr de ffmpeg
-        stderr_resumen = result.stderr[-800:] if result.stderr else "(sin stderr)"
+        # Mostrar stderr completo para diagnóstico
+        stderr_completo = result.stderr if result.stderr else "(sin stderr)"
+        log.error(f"   ❌ Todos los intentos fallaron. stderr completo:\n{stderr_completo}")
         raise RuntimeError(
-            f"ffmpeg falló (código {result.returncode}). "
-            f"¿Hay video en ese rango de tiempo? stderr: {stderr_resumen}"
+            f"ffmpeg falló tras {len(intentos)} intentos (último código {result.returncode}). "
+            f"Posibles causas: (1) No hay grabación en ese rango horario, "
+            f"(2) el túnel SSH no está activo, (3) el track/canal es incorrecto. "
+            f"stderr: {stderr_completo[-1000:]}"
         )
 
     if not os.path.exists(ruta_salida) or os.path.getsize(ruta_salida) < 1024:
