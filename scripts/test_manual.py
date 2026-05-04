@@ -150,18 +150,18 @@ def procesar_directo(cod_pedido: int, local: str, solo_descargar: bool = False):
         if p and os.path.exists(p):
             os.remove(p)
 
-    # Mostrar resumen — Protocolo 5 grupos
+    # Mostrar resumen — Protocolo 4 grupos (entrega/despedida no evaluable desde cámara de caja)
     log.info("\n" + "="*55)
-    log.info("RESULTADO FINAL — Protocolo Pitaya (5 grupos):")
+    log.info("RESULTADO FINAL — Protocolo Pitaya (4 grupos):")
     log.info(f"  Bienvenida    : {resultado['grupo_bienvenida']}/10   (Paso 1: saludo+sonrisa)")
     log.info(f"  Asesoría      : {resultado['grupo_asesoria']}/10   (Pasos 2-4: escucha, recomienda, acompañante)")
-    log.info(f"  Membresía     : {resultado['grupo_membresia']}/10   (Paso 5: Club Pitaya)")
-    log.info(f"  Cobro         : {resultado['grupo_cobro']}/10   (Pasos 6-8: nombre, monto, repite, propina)")
-    log.info(f"  Entrega       : {resultado['grupo_entrega']}/10   (Pasos 9-10: entrega+despedida)")
+    log.info(f"  Membresía     : {resultado['grupo_membresia']}/10   (Paso 5: Club Pitaya — ctx: {resultado.get('membresia_contexto','?')})")
+    log.info(f"  Cobro         : {resultado['grupo_cobro']}/10   (Pasos 6-8: nombre, monto, repite, propina, factura)")
     log.info(f"  ─────────────────────────────────────────────")
     log.info(f"  PROMEDIO      : {resultado['cal_promedio']}/10")
     log.info(f"  Resumen       : {resultado['resumen']}")
     log.info("="*55)
+
 
 
 

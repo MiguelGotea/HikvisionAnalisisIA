@@ -1,4 +1,4 @@
--- ============================================================
+﻿-- ============================================================
 -- MIGRACIONES HikvisionAnalisisIA
 -- Base de datos: u839374897_erp (Hostinger)
 -- Ejecutar en orden
@@ -77,7 +77,7 @@ CREATE TABLE IF NOT EXISTS hikvision_cola_analisis (
 --   grupo_asesoria    → Pasos 2-4:  Escucha, recomienda, personaliza, acompañante
 --   grupo_membresia   → Paso 5:     Solicita membresía Club Pitaya
 --   grupo_cobro       → Pasos 6-8:  Pide, cobra, repite orden, propina, factura
---   grupo_entrega     → Pasos 9-10: Entrega con nombre+sonrisa, despedida
+--   (Pasos 9-10 Entrega NO se evaluan: ocurren fuera de camara de caja)
 -- ────────────────────────────────────────────────────────────
 DROP TABLE IF EXISTS hikvision_analisis_ia_atencion;
 
@@ -96,7 +96,7 @@ CREATE TABLE hikvision_analisis_ia_atencion (
   grupo_asesoria    TINYINT UNSIGNED DEFAULT NULL COMMENT 'Pasos 2-4: Escucha, recomienda, personaliza, acompañante (*opcional en fila)',
   grupo_membresia   TINYINT UNSIGNED DEFAULT NULL COMMENT 'Paso 5: Solicita y explica membresía Club Pitaya',
   grupo_cobro       TINYINT UNSIGNED DEFAULT NULL COMMENT 'Pasos 6-8: Pide nombre, indica monto, repite orden, pregunta propina, entrega factura',
-  grupo_entrega     TINYINT UNSIGNED DEFAULT NULL COMMENT 'Pasos 9-10: Entrega por nombre con sonrisa, despedida cordial',
+  -- grupo_entrega eliminado: pasos 9-10 fuera del alcance de la camara
   cal_promedio      DECIMAL(4,2)     DEFAULT NULL COMMENT 'Promedio de grupos evaluados (no-null)',
 
   -- ── Detalle flexible: breakdown por cada paso individual ──────────────────
@@ -121,3 +121,4 @@ CREATE TABLE hikvision_analisis_ia_atencion (
     FOREIGN KEY (id_cola) REFERENCES hikvision_cola_analisis(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
   COMMENT='Resultados de análisis de atención al cliente (Protocolo Pitaya 10 pasos)';
+

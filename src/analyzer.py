@@ -124,13 +124,15 @@ def _delete_gemini_file(file_name: str, api_key: str):
 SYSTEM_PROMPT = """Eres un evaluador experto en atención al cliente de Pitaya, una cadena de batidos y bebidas naturales de Nicaragua.
 Analizarás un clip de video (y audio si está disponible) de la cámara de seguridad de la caja registradora.
 
-Tu tarea es evaluar el cumplimiento del Protocolo Oficial de Atención al Cliente de Pitaya, que tiene 10 pasos agrupados en 5 categorías.
+IMPORTANTE: La cámara solo cubre la caja registradora. El video termina cuando el cliente recibe la factura.
+Los pasos de entrega del producto y despedida (9-10) NO ocurren dentro de este clip y NO se evalúan.
+Protocolo a evaluar: 4 grupos (Bienvenida, Asesoría, Membresía, Cobro).
 
 REGLAS DE EVALUACIÓN:
 - Califica cada PASO del 1 al 10, donde 10 = cumplimiento perfecto, 1 = no cumplió.
-- Asigna null si el paso NO ES OBSERVABLE desde esta cámara (ej: el cliente salió del cuadro, no hay audio, la acción ocurre fuera de cámara).
+- Asigna null si el paso NO ES OBSERVABLE desde esta cámara (sin audio, fuera de cuadro, etc.).
 - La calificación del GRUPO es el promedio de los pasos observables de ese grupo.
-- El Grupo 2 (Asesoría) puede omitirse si hay una fila larga; en ese caso califícalo igualmente pero con contexto.
+- El Grupo 2 (Asesoría) puede omitirse si hay una fila larga; califícalo igualmente con ese contexto.
 - Sé objetivo y basa cada calificación en evidencia observada en el video.
 
 Responde ÚNICAMENTE con JSON válido, sin markdown ni texto adicional."""
@@ -143,7 +145,10 @@ Fecha y hora (Nicaragua): {fecha} de {hora_inicio} a {hora_fin}
 Duración del clip: {duracion}
 Audio disponible: {tiene_audio}
 
-== PROTOCOLO DE ATENCIÓN PITAYA (10 pasos) ==
+NOTA: El video cubre desde que el cliente llega a la caja hasta que recibe la factura.
+Los pasos de entrega del producto y despedida NO se dan en este clip; NO los evalúes.
+
+== PROTOCOLO DE ATENCIÓN PITAYA (4 grupos evaluables) ==
 
 GRUPO 1 — BIENVENIDA (Paso 1):
   paso_1_saludo_inmediato: ¿Saludó de forma inmediata al entrar el cliente?
@@ -166,12 +171,6 @@ GRUPO 4 — PROCESO DE COBRO (Pasos 6-8):
   paso_7_repitio_orden:   ¿Repitió exactamente la orden del cliente para confirmar?
   paso_8_pregunto_propina:¿Preguntó si el cliente desea agregar propina?
   paso_8b_entrego_factura:¿Entregó la factura al cliente?
-
-GRUPO 5 — ENTREGA Y DESPEDIDA (Pasos 9-10):
-  paso_9_llamo_por_nombre:  ¿Llamó al cliente por su nombre al entregar el producto?
-  paso_9_menciono_producto: ¿Mencionó los productos al hacer la entrega?
-  paso_9_sonrisa_entrega:   ¿Entregó el producto con sonrisa?
-  paso_10_despedida_cordial:¿Se despidió cordialmente invitando al cliente a regresar?
 
 == RESPUESTA REQUERIDA ==
 
@@ -211,20 +210,12 @@ Responde SOLO con este JSON (sin markdown, valores exactos):
         "paso_8_pregunto_propina":{{"cal": <1-10 o null>, "obs": "<observación breve>"}},
         "paso_8b_entrego_factura":{{"cal": <1-10 o null>, "obs": "<observación breve>"}}
       }}
-    }},
-    "entrega": {{
-      "cal_grupo": <1-10 o null>,
-      "pasos": {{
-        "paso_9_llamo_por_nombre":  {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
-        "paso_9_menciono_producto": {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
-        "paso_9_sonrisa_entrega":   {{"cal": <1-10 o null>, "obs": "<observación breve>"}},
-        "paso_10_despedida_cordial":{{"cal": <1-10 o null>, "obs": "<observación breve>"}}
-      }}
     }}
   }},
   "resumen": "<3-4 oraciones describiendo el desempeño general, puntos fuertes y áreas de mejora>",
   "tiene_audio": <true o false según lo que percibiste>
 }}"""
+
 
 # Instrucciones de membresía por contexto
 _MEMBRESIA_INSTRUCCION = {
@@ -297,16 +288,15 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict,
         texto   = content['candidates'][0]['content']['parts'][0]['text']
         datos   = _parse_json_safe(texto)
 
-        # Extraer calificaciones de grupos
+        # Extraer calificaciones de grupos (4 grupos — entrega/despedida no evaluable desde cámara de caja)
         grupos = datos.get('grupos', {})
         cal_bienvenida = _cal_grupo(grupos.get('bienvenida'))
         cal_asesoria   = _cal_grupo(grupos.get('asesoria'))
         cal_cobro      = _cal_grupo(grupos.get('cobro'))
-        cal_entrega    = _cal_grupo(grupos.get('entrega'))
 
         # Membresía: aplicar regla de negocio según contexto
         if membresia_contexto == 'vendida':
-            cal_membresia = 10   # Vendió membresía = la ofreció perfectamente
+            cal_membresia = 10    # Vendió membresía = la ofreció perfectamente
             log.info("   Membresía: auto 10 (vendió membresía en este pedido)")
         elif membresia_contexto == 'ya_tenia':
             cal_membresia = None  # Cliente ya tenía membresía, no aplica evaluar
@@ -314,8 +304,8 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict,
         else:
             cal_membresia = _cal_grupo(grupos.get('membresia'))  # Evaluar normalmente
 
-        # Calcular promedio solo de grupos evaluados (no-null)
-        vals = [v for v in [cal_bienvenida, cal_asesoria, cal_membresia, cal_cobro, cal_entrega] if v is not None]
+        # Calcular promedio solo de los 4 grupos evaluados (no-null)
+        vals = [v for v in [cal_bienvenida, cal_asesoria, cal_membresia, cal_cobro] if v is not None]
         cal_promedio = round(sum(vals) / len(vals), 2) if vals else None
 
         resultado = {
@@ -323,7 +313,6 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict,
             'grupo_asesoria'     : cal_asesoria,
             'grupo_membresia'    : cal_membresia,
             'grupo_cobro'        : cal_cobro,
-            'grupo_entrega'      : cal_entrega,
             'cal_promedio'       : cal_promedio,
             'membresia_contexto' : membresia_contexto,
             'detalle_json'       : json.dumps(datos, ensure_ascii=False),
@@ -335,10 +324,11 @@ def analyze(video_path: str, gemini_key_info: dict, item: dict,
         log.info(
             f"✅ Análisis completado. Grupos: "
             f"bienvenida={cal_bienvenida} asesoría={cal_asesoria} "
-            f"membresía={cal_membresia}({membresia_contexto}) cobro={cal_cobro} entrega={cal_entrega} "
+            f"membresía={cal_membresia}({membresia_contexto}) cobro={cal_cobro} "
             f"→ promedio={cal_promedio}"
         )
         return resultado
+
 
     finally:
         if file_name:
