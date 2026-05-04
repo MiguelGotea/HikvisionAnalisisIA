@@ -8,19 +8,6 @@ ignora el timezone y trata el timestamp como hora local.
 Por eso se envía la hora Nicaragua directamente (sin convertir a UTC).
 Enviar UTC causaba 400 Bad Request porque el DVR buscaba video en el tiempo
 equivocado (ej: medianoche en lugar de 18:30).
-
-FALLBACK DE URL RTSP:
-El error "Invalid data found" (código 183) al conectar vía RTSP significa que
-el DVR rechaza el PATH de la URL — no es un problema de audio ni de codec.
-Los DVR Hikvision/HiLook tienen múltiples formatos de URL según su firmware:
-
-  ISAPI moderno (HiLook / Hikvision reciente):
-    /Streaming/Channels/101?starttime=...&endtime=...
-
-  PSIA clásico (Hikvision firmware antiguo):
-    /PSIA/Streaming/tracks/101?starttime=...&endtime=...
-
-El downloader prueba cada formato en orden hasta encontrar el que funciona.
 """
 
 import subprocess
@@ -47,7 +34,7 @@ def download(item: dict) -> str:
       canal_track, puerto_rtsp, dvr_usuario, dvr_clave, vps_ip
 
     Retorna la ruta al archivo .mp4 descargado.
-    Lanza RuntimeError si la descarga falla con todos los formatos.
+    Lanza Exception si la descarga falla.
     """
     id_cola    = item['id']
     cod_pedido = item['cod_pedido']
@@ -61,15 +48,23 @@ def download(item: dict) -> str:
     clave      = item['dvr_clave']
     vps_ip     = item.get('vps_ip', config.VPS_IP)
 
-    # Hora Nicaragua directamente — el DVR HiLook ignora el sufijo Z
+    # Enviar hora Nicaragua directamente — el DVR HiLook ignora el sufijo Z
+    # y busca la grabación por hora local del dispositivo.
     dt_ini = _parse_ni_datetime(fecha, hora_ini)
     dt_fin = _parse_ni_datetime(fecha, hora_fin)
 
-    start_str    = dt_ini.strftime("%Y%m%dT%H%M%SZ")
+    start_str    = dt_ini.strftime("%Y%m%dT%H%M%SZ")  # Z es formalidad, DVR usa hora local
     end_str      = dt_fin.strftime("%Y%m%dT%H%M%SZ")
     duracion_seg = max(int((dt_fin - dt_ini).total_seconds()), 10)
 
-    # Ruta de salida
+    # Construir URL RTSP (túnel VPS expone puerto del DVR)
+    rtsp_url = (
+        f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto}"
+        f"/PSIA/Streaming/tracks/{track}"
+        f"?starttime={start_str}&endtime={end_str}"
+    )
+
+    # Ruta de salida (dentro de TEMP_DIR)
     nombre_archivo = f"cola_{id_cola}_pedido_{cod_pedido}_local_{local}.mp4"
     ruta_salida    = os.path.join(config.TEMP_DIR, nombre_archivo)
 
@@ -77,104 +72,65 @@ def download(item: dict) -> str:
 
     log.info(
         f"⬇️  Descargando cola={id_cola} pedido={cod_pedido} "
-        f"local={local} {hora_ini}→{hora_fin} "
-        f"(hora NI local → {start_str}→{end_str}) "
+        f"local={local} {hora_ini}→{hora_fin} (hora NI local → {start_str}→{end_str}) "
         f"puerto={puerto} track={track}"
     )
 
-    # canal_simple: primer dígito del track (101 → 1, 201 → 2)
-    canal_simple = int(str(track)[0]) if str(track).isdigit() else 1
-
-    base  = f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto}"
-    rango = f"?starttime={start_str}&endtime={end_str}"
-
-    # Formatos de URL RTSP a probar en orden.
-    # Los DVR HiLook modernos usan ISAPI (/Streaming/Channels/).
-    # Los DVR Hikvision antiguos usan PSIA (/PSIA/Streaming/tracks/).
-    urls_a_probar = [
-        (f"{base}/Streaming/Channels/{track}{rango}",           "ISAPI /Channels/track"),
-        (f"{base}/Streaming/Channels/{canal_simple}{rango}",    "ISAPI /Channels/simple"),
-        (f"{base}/PSIA/Streaming/tracks/{track}{rango}",        "PSIA /tracks/track"),
-        (f"{base}/PSIA/Streaming/tracks/{canal_simple}{rango}", "PSIA /tracks/simple"),
-    ]
-
-    def _run_ffmpeg(url: str, transport: str = "tcp"):
-        """Llama ffmpeg para descargar el clip RTSP. Retorna CompletedProcess."""
-        cmd = [
+    # DVR Hikvision/HiLook transmite audio en pcm_mulaw (G.711) que NO es
+    # compatible con contenedor MP4. Se transcodifica a AAC (sí compatible).
+    # Fallback sin audio si el codec del DVR es aún más exótico.
+    def _build_cmd(audio_flags: list) -> list:
+        return [
             "ffmpeg", "-y",
-            "-rtsp_transport", transport,
-            "-i", url,
-            "-an",           # pcm_mulaw (G.711) no es compatible con MP4
+            "-rtsp_transport", "tcp",
+            "-i", rtsp_url,
             "-c:v", "copy",
+            *audio_flags,
             "-t", str(duracion_seg),
             ruta_salida
         ]
+
+    intentos = [
+        (["-c:a", "aac", "-b:a", "64k", "-ac", "1"], "audio AAC"),
+        (["-an"],                                       "sin audio"),
+    ]
+
+    result = None
+    for audio_flags, descripcion_audio in intentos:
+        cmd = _build_cmd(audio_flags)
+        log.info(f"   Intentando con {descripcion_audio}...")
         try:
-            return subprocess.run(
-                cmd, capture_output=True, text=True, timeout=timeout_total
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout_total
             )
         except subprocess.TimeoutExpired:
-            log.warning(f"   ⚠️  Timeout ({timeout_total}s) — {url}")
-
-            class _TimeoutResult:
-                returncode = -1
-                stderr = f"Timeout tras {timeout_total}s"
-
-            return _TimeoutResult()
-
-    result      = None
-    url_exitosa = None
-
-    for rtsp_url_intento, descripcion in urls_a_probar:
-        log.info(f"   🔗 Probando {descripcion}...")
-        result = _run_ffmpeg(rtsp_url_intento, transport="tcp")
-
+            raise RuntimeError(
+                f"Timeout ({timeout_total}s) descargando cola={id_cola}. "
+                f"¿El túnel SSH está activo en el local?"
+            )
         if result.returncode == 0:
-            url_exitosa = rtsp_url_intento
-            log.info(f"   ✅ Descarga exitosa con {descripcion}")
+            log.info(f"   ✅ Descarga exitosa ({descripcion_audio})")
             break
+        log.warning(f"   ⚠️  Falló con {descripcion_audio}, probando siguiente...")
 
-        stderr_tail = (result.stderr or "")[-200:].strip()
-        log.warning(
-            f"   ⚠️  Falló {descripcion} "
-            f"(código {result.returncode}): {stderr_tail}"
-        )
-
-        # Código 183 = "Invalid data found" → el PATH no existe en este DVR.
-        # No tiene sentido reintentar con UDP; pasar al siguiente formato.
-        if result.returncode == 183:
-            continue
-
-        # Para otros códigos de error, probar también con UDP
-        result_udp = _run_ffmpeg(rtsp_url_intento, transport="udp")
-        if result_udp.returncode == 0:
-            url_exitosa = rtsp_url_intento
-            log.info(f"   ✅ Descarga exitosa con {descripcion} (UDP)")
-            result = result_udp
-            break
-        log.warning(f"   ⚠️  Falló {descripcion} UDP (código {result_udp.returncode})")
-
-    if not url_exitosa:
-        stderr_completo = result.stderr if result else "(sin resultado)"
-        urls_lista = "\n".join(f"  - {d}" for _, d in urls_a_probar)
-        log.error(
-            f"   ❌ Todos los formatos de URL RTSP fallaron.\n"
-            f"   Probados:\n{urls_lista}\n"
-            f"   Último stderr: {stderr_completo[-600:]}"
-        )
+    if result.returncode != 0:
+        # Extraer último fragmento relevante del stderr de ffmpeg
+        stderr_resumen = result.stderr[-800:] if result.stderr else "(sin stderr)"
         raise RuntimeError(
-            f"ffmpeg falló con todos los formatos de URL RTSP. "
-            f"Verifica que el túnel SSH esté activo y las credenciales del DVR sean correctas. "
-            f"Formatos probados: {[d for _, d in urls_a_probar]}"
+            f"ffmpeg falló (código {result.returncode}). "
+            f"¿Hay video en ese rango de tiempo? stderr: {stderr_resumen}"
         )
 
     if not os.path.exists(ruta_salida) or os.path.getsize(ruta_salida) < 1024:
         raise RuntimeError(
             f"Archivo descargado vacío o inexistente: {ruta_salida}. "
-            f"El DVR puede no tener grabación en ese rango horario."
+            f"El DVR puede no tener grabación en ese rango."
         )
 
     size_mb = os.path.getsize(ruta_salida) / (1024 * 1024)
-    log.info(f"✅ Descargado: {ruta_salida} ({size_mb:.1f} MB) — URL: {url_exitosa}")
+    log.info(f"✅ Descargado: {ruta_salida} ({size_mb:.1f} MB)")
 
     return ruta_salida
