@@ -5,28 +5,6 @@
 -- ============================================================
 
 -- ────────────────────────────────────────────────────────────
--- 1. Nuevas columnas en DVR_Sucursales
--- ────────────────────────────────────────────────────────────
-ALTER TABLE DVR_Sucursales
-  ADD COLUMN IF NOT EXISTS canal_caja      INT            DEFAULT NULL COMMENT 'Track RTSP del canal de caja (101=ch1, 201=ch2, 401=ch4)',
-  ADD COLUMN IF NOT EXISTS puerto_rtsp_vps INT            DEFAULT NULL COMMENT 'Puerto RTSP expuesto en VPS via túnel SSH inverso',
-  ADD COLUMN IF NOT EXISTS tunel_activo    TINYINT(1)     DEFAULT 0    COMMENT '1=Túnel SSH configurado y activo en producción';
-
--- Datos iniciales de Granada (cod_sucursal=10)
-UPDATE DVR_Sucursales
-SET canal_caja = 101, puerto_rtsp_vps = 9554, tunel_activo = 1
-WHERE cod_sucursal = 10;
-
--- Las Brisas (cod_sucursal=16)
-UPDATE DVR_Sucursales
-SET canal_caja = 101, puerto_rtsp_vps = 9561, tunel_activo = 1
-WHERE cod_sucursal = 16;
-
--- Puertos reservados para las demás sucursales (sin túnel aún)
--- Masaya=9555, Central=9556, Estelí=9557, Calli=9558, VillaFontana=9559, León=9560
-
-
--- ────────────────────────────────────────────────────────────
 -- 2. Cola de análisis (queue table) — sin cambios
 -- ────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS hikvision_cola_analisis (
