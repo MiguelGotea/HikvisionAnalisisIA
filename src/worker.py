@@ -89,16 +89,17 @@ def process_item(item: dict):
 
         # 5. Analizar
         resultado = analyzer.analyze(
-            video_path      = video_small,
-            gemini_key_info = gemini_info,
-            item            = item,
-            tiene_audio     = tiene_audio,
+            video_path        = video_small,
+            gemini_key_info   = gemini_info,
+            item              = item,
+            tiene_audio       = tiene_audio,
+            duracion_segundos = duracion_seg,
         )
         resultado['duracion_segundos'] = duracion_seg
 
         # 6. Guardar resultado
         api_client.save_result(id_cola, resultado)
-        log.info(f"✅ COMPLETADO cola={id_cola} pedido={cod_pedido} promedio={resultado.get('promedio', 'N/A')}")
+        log.info(f"✅ COMPLETADO cola={id_cola} pedido={cod_pedido} promedio={resultado.get('cal_promedio', 'N/A')}")
 
     except Exception as e:
         error_msg = str(e)
