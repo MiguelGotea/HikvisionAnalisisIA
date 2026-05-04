@@ -79,13 +79,14 @@ def download(item: dict) -> str:
     # DVR Hikvision/HiLook transmite audio en pcm_mulaw (G.711) que NO es
     # compatible con contenedor MP4. Se transcodifica a AAC (sí compatible).
     # Fallback sin audio si el codec del DVR es aún más exótico.
-    # stimeout: tiempo máximo de espera de conexión RTSP en microsegundos (30s).
+    # timeout: tiempo máximo de espera de conexión RTSP en microsegundos (ffmpeg 6.x).
+    # Nota: en ffmpeg 6.x el flag es -timeout (antes era -stimeout, ya no existe).
     def _build_cmd(audio_flags: list, extra_input_flags: list = None) -> list:
         input_flags = extra_input_flags or []
         return [
             "ffmpeg", "-y",
             "-rtsp_transport", "tcp",
-            "-stimeout", "30000000",          # 30s timeout de conexión RTSP
+            "-timeout", "30000000",          # 30s timeout conexión RTSP (ffmpeg 6.x)
             *input_flags,
             "-i", rtsp_url,
             "-c:v", "copy",
@@ -112,7 +113,7 @@ def download(item: dict) -> str:
             cmd = [
                 "ffmpeg", "-y",
                 "-rtsp_transport", "udp",
-                "-stimeout", "30000000",
+                "-timeout", "30000000",
                 "-i", rtsp_url,
                 "-an",
                 "-c:v", "copy",

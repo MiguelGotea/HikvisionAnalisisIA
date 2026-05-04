@@ -62,7 +62,7 @@ def probar_rtsp_url(rtsp_url: str, duracion: int, timeout_extra: int = 15, modo:
     cmd = [
         "ffmpeg", "-y",
         "-rtsp_transport", modo,
-        "-stimeout", "20000000",       # 20s de timeout de conexión RTSP
+        "-timeout", "20000000",        # 20s timeout RTSP (ffmpeg 6.x)
         "-i", rtsp_url,
         "-an",
         "-c:v", "copy",
