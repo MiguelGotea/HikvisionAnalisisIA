@@ -8,23 +8,7 @@
 
 ---
 
-## Paso 1 — Verificar que OpenSSH está instalado
-
-Abrir PowerShell y ejecutar:
-```powershell
-ssh -V
-# Debe mostrar: OpenSSH_for_Windows_X.X...
-```
-
-Si no está instalado:
-```powershell
-# PowerShell como Administrador
-Add-WindowsCapability -Online -Name OpenSSH.Client~~~~0.0.1.0
-```
-
----
-
-## Paso 2 — Generar y registrar llave SSH (si no existe)
+## Paso 1 — Generar llave SSH (si no existe)
 
 Si la PC es nueva, debes generar una llave y autorizarla en el VPS:
 
@@ -39,7 +23,9 @@ Si la PC es nueva, debes generar una llave y autorizarla en el VPS:
    # Copia el texto que empieza con "ssh-ed25519 ..."
    ```
 
-3. **Registrar en el VPS**:
+## Paso 2 — Registrar llave SSH 
+
+1. **Registrar en el VPS**:
    Accede al VPS desde una PC que ya tenga acceso y pega la llave:
    ```bash
    # En el VPS:

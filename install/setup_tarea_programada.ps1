@@ -3,12 +3,12 @@
 # Ejecutar como ADMINISTRADOR en PowerShell
 #
 # Uso:
-#   .\setup_tarea_programada.ps1 -BatPath "C:\tunel_dvr_granada.bat" -NombreTarea "TunelDVR_Granada"
+#   .\setup_tarea_programada.ps1 -BatPath "C:\tunel_dvr_villafontana.bat" -NombreTarea "TunelDVR_Villafontana"
 # ============================================================
 
 param(
-    [string]$BatPath    = "C:\tunel_dvr_granada.bat",
-    [string]$NombreTarea = "TunelDVR_Granada"
+    [string]$BatPath    = "C:\tunel_dvr_villafontana.bat",
+    [string]$NombreTarea = "TunelDVR_Villafontana"
 )
 
 Write-Host "==================================================" -ForegroundColor Cyan
