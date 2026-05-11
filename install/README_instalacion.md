@@ -70,6 +70,8 @@ Abrir **PowerShell como Administrador** y ejecutar:
 ```powershell
 # Ajustar la ruta del .bat y el nombre de la tarea según la sucursal
 .\setup_tarea_programada.ps1 -BatPath "C:\tunel_dvr_granada.bat" -NombreTarea "TunelDVR_Granada"
+
+powershell.exe -ExecutionPolicy Bypass -File "C:\users\pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\setup_tarea_programada.ps1" -BatPath "C:\tunel_dvr_villafontana.bat" -NombreTarea "TunelDVR_VillaFontana"
 ```
 
 Esto crea una tarea que:
