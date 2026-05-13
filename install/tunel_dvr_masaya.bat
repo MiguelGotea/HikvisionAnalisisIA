@@ -1,15 +1,16 @@
 @echo off
 REM ============================================================
-REM tunel_dvr_masaya.bat — Túnel SSH permanente DVR Masaya
+REM tunel_dvr_masaya.bat — Tunel SSH permanente DVR Masaya
 REM Sucursal: Masaya | cod_sucursal: 12
-REM Puerto VPS RTSP: 9582
+REM Puerto VPS RTSP : 9582  (-> 192.168.1.120:554)
+REM Puerto VPS HTTP : 9682  (-> 192.168.1.120:80 )  para captura de imagen ISAPI
 REM DVR IP local: 192.168.1.120 (actualiza si cambia)
 REM ============================================================
 REM
-REM INSTALACIÓN:
+REM INSTALACION:
 REM 1. Coloca este archivo en C:\tunel_dvr_masaya.bat
 REM 2. Ejecuta setup_tarea_programada.ps1 como Administrador
-REM    para crear la tarea que lo inicia automáticamente.
+REM    para crear la tarea que lo inicia automaticamente.
 REM
 REM Para probar manualmente: doble clic o ejecutar en CMD
 REM Para detener: cerrar la ventana o Ctrl+C
@@ -22,6 +23,7 @@ ssh -o StrictHostKeyChecking=no ^
     -o ServerAliveCountMax=3 ^
     -o ExitOnForwardFailure=yes ^
     -R 0.0.0.0:9582:192.168.1.120:554 ^
+    -R 0.0.0.0:9682:192.168.1.120:80 ^
     root@198.211.97.243 -N
 
 echo [%date% %time%] Tunel caido. Reconectando en 10 segundos...
