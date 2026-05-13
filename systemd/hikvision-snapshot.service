@@ -1,0 +1,32 @@
+[Unit]
+Description=HikvisionAnalisisIA — Snapshot server (captura frames via RTSP/ffmpeg)
+Documentation=https://github.com/tu-org/hikvisionanalisisia
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/hikvision-ia
+
+# Servidor HTTP para snapshots sincrono
+ExecStart=/opt/hikvision-ia/venv/bin/python -m src.snapshot_server
+
+# Reiniciar siempre si cae
+Restart=always
+RestartSec=10
+
+# Variables de entorno desde el .env del proyecto
+EnvironmentFile=/opt/hikvision-ia/.env
+
+# Logging (journald captura stdout/stderr)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=hikvision-snapshot
+
+# Limites
+LimitNOFILE=4096
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
