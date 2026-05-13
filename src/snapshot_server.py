@@ -47,33 +47,44 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
     Canal: 101=cam1, 201=cam2, 301=cam3, 401=cam4
     Retorna los bytes del JPEG o lanza RuntimeError si falla.
     """
-    # URL para este DVR (DS-7104HGHI-M1)
-    # /PSIA/Streaming/tracks/X sin starttime = stream en VIVO
-    # /Streaming/Channels/X no funciona en este modelo
-    rtsp_url = (
-        f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}"
-        f"/PSIA/Streaming/tracks/{canal}"
-    )
+    # Derivar numero de camara desde el canal Hikvision
+    # canal: 101=cam1, 201=cam2, 301=cam3, 401=cam4
+    cam_num = canal // 100  # 101 -> 1, 201 -> 2, etc.
+
+    # /h264/chX/main/av_stream = stream EN VIVO (imagen del momento actual)
+    # /PSIA/Streaming/tracks/X = puede entregar grabacion almacenada (no live)
+    rtsp_url_live   = f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}/h264/ch{cam_num}/main/av_stream"
+    rtsp_url_tracks = f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}/PSIA/Streaming/tracks/{canal}"
 
     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
         tmp_path = tmp.name
 
     try:
-        cmd = [
-            'ffmpeg', '-y',
-            '-rtsp_transport', 'tcp',
-            '-i', rtsp_url,
-            '-frames:v', '1',
-            '-update', '1',          # necesario para imagen unica sin patron %d
-            '-q:v', '3',             # calidad JPEG (1=mejor, 31=peor)
-            tmp_path
-        ]
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=FFMPEG_TIMEOUT
-        )
+        def _run_ffmpeg(rtsp_url: str) -> subprocess.CompletedProcess:
+            cmd = [
+                'ffmpeg', '-y',
+                '-rtsp_transport', 'tcp',
+                '-i', rtsp_url,
+                '-frames:v', '1',
+                '-update', '1',
+                '-q:v', '3',
+                tmp_path
+            ]
+            return subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=FFMPEG_TIMEOUT
+            )
+
+        # Intentar primero con URL de live feed
+        log.info(f'Probando live feed: {rtsp_url_live}')
+        result = _run_ffmpeg(rtsp_url_live)
+
+        if result.returncode != 0:
+            # Fallback a tracks (funciona en DVRs que no soporten /h264/)
+            log.warning(f'Live URL fallo (cod {result.returncode}), usando tracks fallback...')
+            result = _run_ffmpeg(rtsp_url_tracks)
 
         if result.returncode != 0:
             stderr = result.stderr[-600:] if result.stderr else '(sin stderr)'
