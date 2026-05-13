@@ -47,10 +47,12 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
     Canal: 101=cam1, 201=cam2, 301=cam3, 401=cam4
     Retorna los bytes del JPEG o lanza RuntimeError si falla.
     """
-    # Stream en VIVO — imagen del momento exacto en que se solicita
+    # URL para este DVR (DS-7104HGHI-M1)
+    # /PSIA/Streaming/tracks/X sin starttime = stream en VIVO
+    # /Streaming/Channels/X no funciona en este modelo
     rtsp_url = (
         f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}"
-        f"/Streaming/Channels/{canal}"
+        f"/PSIA/Streaming/tracks/{canal}"
     )
 
     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
