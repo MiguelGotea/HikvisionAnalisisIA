@@ -29,7 +29,6 @@ import subprocess
 import tempfile
 import urllib.request
 import urllib.error
-import base64
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from . import config
@@ -47,27 +46,31 @@ def _isapi_snapshot(usuario: str, clave: str,
                     canal: int) -> bytes | None:
     """
     Intenta capturar un frame via ISAPI HTTP (DVR moderno con firmware compatible).
+    Usa Digest Auth (requerido por Hikvision — Basic Auth devuelve 401).
     Devuelve bytes JPEG si tiene exito, o None si el DVR no lo soporta.
-    Canal: 101 → /ISAPI/Streaming/channels/101/picture (mismo numero)
+    Canal: 101 → /ISAPI/Streaming/channels/101/picture
     """
     url = f"http://{vps_ip}:{puerto_http}/ISAPI/Streaming/channels/{canal}/picture"
-    credentials = base64.b64encode(f"{usuario}:{clave}".encode()).decode()
-    req = urllib.request.Request(url)
-    req.add_header('Authorization', f'Basic {credentials}')
-    req.add_header('Accept', 'image/jpeg, */*')
+    # Hikvision usa Digest Auth, no Basic
+    pwd_mgr = urllib.request.HTTPPasswordMgrWithDefaultRealm()
+    pwd_mgr.add_password(None, url, usuario, clave)
+    opener = urllib.request.build_opener(
+        urllib.request.HTTPDigestAuthHandler(pwd_mgr)
+    )
     try:
-        with urllib.request.urlopen(req, timeout=ISAPI_TIMEOUT) as resp:
-            ct = resp.headers.get('Content-Type', '')
-            if resp.status == 200 and 'image' in ct:
+        with opener.open(url, timeout=ISAPI_TIMEOUT) as resp:
+            ct   = resp.headers.get('Content-Type', '')
+            code = resp.getcode()
+            if code == 200 and 'image' in ct:
                 data = resp.read()
                 if len(data) > 1024:
-                    log.info(f'ISAPI HTTP OK: {len(data)//1024}KB (canal {canal})')
+                    log.info(f'ISAPI Digest OK: {len(data)//1024}KB (canal {canal})')
                     return data
-            log.warning(f'ISAPI HTTP respuesta inesperada: status={resp.status} ct={ct}')
+            log.warning(f'ISAPI respuesta inesperada: status={code} ct={ct}')
     except urllib.error.HTTPError as e:
         log.warning(f'ISAPI HTTP {e.code}: firmware no compatible (canal {canal})')
     except Exception as e:
-        log.warning(f'ISAPI HTTP error: {e}')
+        log.warning(f'ISAPI error: {e}')
     return None
 
 
