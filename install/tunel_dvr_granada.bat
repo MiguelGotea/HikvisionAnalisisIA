@@ -12,6 +12,7 @@ ssh -o StrictHostKeyChecking=no ^
     -o ServerAliveCountMax=3 ^
     -o ExitOnForwardFailure=yes ^
     -R 0.0.0.0:9554:192.168.1.100:554 ^
+    -R 0.0.0.0:9654:192.168.1.100:80 ^
     root@198.211.97.243 -N
 
 echo [%date% %time%] Tunel caido. Reconectando en 10 segundos...
