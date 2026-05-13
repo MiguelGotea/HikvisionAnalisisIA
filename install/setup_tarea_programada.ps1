@@ -23,6 +23,47 @@ if (-not (Test-Path $BatPath)) {
     exit 1
 }
 
+# ============================================================
+# PASO CRITICO: Copiar llave SSH al perfil SYSTEM
+# La tarea corre como SYSTEM, que no puede leer C:\Users\..\.ssh\
+# La llave debe estar en C:\Windows\System32\config\systemprofile\.ssh\
+# ============================================================
+$systemSshDir = "C:\Windows\System32\config\systemprofile\.ssh"
+$usuarioActual = $env:USERPROFILE
+$llaveFuente   = "$usuarioActual\.ssh\id_ed25519"
+$llaveDestino  = "$systemSshDir\id_ed25519"
+
+Write-Host ""
+Write-Host "--- Configurando llave SSH para usuario SYSTEM ---" -ForegroundColor Cyan
+
+if (-not (Test-Path $llaveFuente)) {
+    Write-Host "ADVERTENCIA: No se encontro la llave en $llaveFuente" -ForegroundColor Yellow
+    Write-Host "  Asegurate de haber generado la llave SSH (ssh-keygen -t ed25519)" -ForegroundColor Yellow
+} else {
+    # Crear directorio si no existe
+    if (-not (Test-Path $systemSshDir)) {
+        New-Item -ItemType Directory -Force -Path $systemSshDir | Out-Null
+        Write-Host "  Directorio .ssh de SYSTEM creado." -ForegroundColor Gray
+    }
+
+    # Copiar llave privada
+    Copy-Item -Force $llaveFuente $llaveDestino
+    Write-Host "  ✅ Llave privada copiada a perfil SYSTEM" -ForegroundColor Green
+
+    # Copiar known_hosts si existe (evita el prompt interactivo de confirmacion)
+    $knownSrc = "$usuarioActual\.ssh\known_hosts"
+    $knownDst = "$systemSshDir\known_hosts"
+    if (Test-Path $knownSrc) {
+        Copy-Item -Force $knownSrc $knownDst
+        Write-Host "  ✅ known_hosts copiado" -ForegroundColor Green
+    } else {
+        # Crear known_hosts vacio para evitar error de permisos
+        New-Item -ItemType File -Force -Path $knownDst | Out-Null
+        Write-Host "  ℹ  known_hosts creado vacio (se llenara en primera conexion)" -ForegroundColor Gray
+    }
+}
+Write-Host ""
+
 # Eliminar tarea si ya existe (para actualizar)
 $tareaExistente = Get-ScheduledTask -TaskName $NombreTarea -ErrorAction SilentlyContinue
 if ($tareaExistente) {

@@ -57,7 +57,7 @@ Copiar el archivo `.bat` correspondiente a la sucursal a `C:\`:
 | Central       | `tunel_dvr_central.bat`     | 9556       |
 | Estelí        | `tunel_dvr_esteli.bat`      | 9557       |
 | Calli         | `tunel_dvr_calli.bat`       | 9558       |
-| Villa Fontana | `tunel_dvr_villafontana.bat`| 9559       |
+| Villa Fontana | `tunel_dvr_villafontana.bat`| 9579       |
 | León          | `tunel_dvr_leon.bat`        | 9560       |
 | Las Brisas    | `tunel_dvr_lasbrisas.bat`    | 9561       |
 
@@ -134,6 +134,9 @@ Stop-ScheduledTask -TaskName "TunelDVR_Granada"
 
 # Ver historial de ejecuciones
 Get-ScheduledTaskInfo -TaskName "TunelDVR_Granada"
+
+# APertura manual de tunel desde PC
+ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 0.0.0.0:9579:192.168.1.90:554 root@198.211.97.243 -N
 ```
 
 ## Comandos útiles en el VPS
