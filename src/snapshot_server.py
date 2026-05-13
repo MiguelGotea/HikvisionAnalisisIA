@@ -42,11 +42,15 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
                    canal: int, vps_ip: str = '127.0.0.1') -> bytes:
     """
     Captura un fotograma JPEG del DVR via RTSP usando ffmpeg.
+    Usa /Streaming/Channels/ (stream EN VIVO) para obtener la imagen
+    del momento actual, no de grabaciones almacenadas.
+    Canal: 101=cam1, 201=cam2, 301=cam3, 401=cam4
     Retorna los bytes del JPEG o lanza RuntimeError si falla.
     """
+    # Stream en VIVO — imagen del momento exacto en que se solicita
     rtsp_url = (
         f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}"
-        f"/PSIA/Streaming/tracks/{canal}"
+        f"/Streaming/Channels/{canal}"
     )
 
     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
