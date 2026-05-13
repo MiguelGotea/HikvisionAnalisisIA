@@ -1,5 +1,5 @@
 # ============================================================
-# setup_tarea_programada.ps1 — Crea tarea de Windows para el túnel SSH
+# setup_tarea_programada.ps1 -- Crea tarea de Windows para el tunel SSH
 # Ejecutar como ADMINISTRADOR en PowerShell
 #
 # Uso:
@@ -25,7 +25,7 @@ if (-not (Test-Path $BatPath)) {
 
 # ============================================================
 # PASO CRITICO: Copiar llave SSH al perfil SYSTEM
-# La tarea corre como SYSTEM, que no puede leer C:\Users\..\.ssh\
+# La tarea corre como SYSTEM, que no puede leer C:\Users\..\ssh\
 # La llave debe estar en C:\Windows\System32\config\systemprofile\.ssh\
 # ============================================================
 $systemSshDir = "C:\Windows\System32\config\systemprofile\.ssh"
@@ -43,23 +43,23 @@ if (-not (Test-Path $llaveFuente)) {
     # Crear directorio si no existe
     if (-not (Test-Path $systemSshDir)) {
         New-Item -ItemType Directory -Force -Path $systemSshDir | Out-Null
-        Write-Host "  Directorio .ssh de SYSTEM creado." -ForegroundColor Gray
+        Write-Host "  [OK] Directorio .ssh de SYSTEM creado." -ForegroundColor Gray
     }
 
     # Copiar llave privada
     Copy-Item -Force $llaveFuente $llaveDestino
-    Write-Host "  ✅ Llave privada copiada a perfil SYSTEM" -ForegroundColor Green
+    Write-Host "  [OK] Llave privada copiada a perfil SYSTEM" -ForegroundColor Green
 
     # Copiar known_hosts si existe (evita el prompt interactivo de confirmacion)
     $knownSrc = "$usuarioActual\.ssh\known_hosts"
     $knownDst = "$systemSshDir\known_hosts"
     if (Test-Path $knownSrc) {
         Copy-Item -Force $knownSrc $knownDst
-        Write-Host "  ✅ known_hosts copiado" -ForegroundColor Green
+        Write-Host "  [OK] known_hosts copiado" -ForegroundColor Green
     } else {
         # Crear known_hosts vacio para evitar error de permisos
         New-Item -ItemType File -Force -Path $knownDst | Out-Null
-        Write-Host "  ℹ  known_hosts creado vacio (se llenara en primera conexion)" -ForegroundColor Gray
+        Write-Host "  [INFO] known_hosts creado vacio (se llenara en primera conexion)" -ForegroundColor Gray
     }
 }
 Write-Host ""
@@ -71,7 +71,7 @@ if ($tareaExistente) {
     Unregister-ScheduledTask -TaskName $NombreTarea -Confirm:$false
 }
 
-# Definir la acción: ejecutar el .bat
+# Definir la accion: ejecutar el .bat
 $accion = New-ScheduledTaskAction `
     -Execute "cmd.exe" `
     -Argument "/c `"$BatPath`""
@@ -104,7 +104,7 @@ Register-ScheduledTask `
     -Force
 
 Write-Host ""
-Write-Host "✅ Tarea '$NombreTarea' creada correctamente." -ForegroundColor Green
+Write-Host "[OK] Tarea '$NombreTarea' creada correctamente." -ForegroundColor Green
 Write-Host ""
 Write-Host "Comandos utiles:" -ForegroundColor Cyan
 Write-Host "  Iniciar ahora  : Start-ScheduledTask -TaskName '$NombreTarea'"
@@ -114,8 +114,8 @@ Write-Host "  Eliminar       : Unregister-ScheduledTask -TaskName '$NombreTarea'
 Write-Host ""
 
 # Iniciar inmediatamente
-$iniciar = Read-Host "¿Iniciar el tunel ahora? (S/N)"
+$iniciar = Read-Host "Iniciar el tunel ahora? (S/N)"
 if ($iniciar -eq "S" -or $iniciar -eq "s") {
     Start-ScheduledTask -TaskName $NombreTarea
-    Write-Host "✅ Tunel iniciado." -ForegroundColor Green
+    Write-Host "[OK] Tunel iniciado." -ForegroundColor Green
 }
