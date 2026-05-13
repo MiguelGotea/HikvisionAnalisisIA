@@ -56,8 +56,9 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
     # El DVR trata el timestamp como hora local NI (UTC-6), no UTC real.
     from datetime import datetime, timedelta
     now_ni    = datetime.utcnow() - timedelta(hours=6)
-    end_ni    = now_ni + timedelta(seconds=30)
-    start_str = now_ni.strftime("%Y%m%dT%H%M%SZ")
+    start_ni  = now_ni - timedelta(seconds=30)
+    end_ni    = now_ni
+    start_str = start_ni.strftime("%Y%m%dT%H%M%SZ")
     end_str   = end_ni.strftime("%Y%m%dT%H%M%SZ")
 
     rtsp_url_now    = (
