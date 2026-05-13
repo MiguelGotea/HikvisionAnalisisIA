@@ -60,7 +60,7 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
         tmp_path = tmp.name
 
     try:
-        def _run_ffmpeg(rtsp_url: str) -> subprocess.CompletedProcess:
+        def _run_ffmpeg(rtsp_url: str, timeout: int = FFMPEG_TIMEOUT) -> subprocess.CompletedProcess:
             cmd = [
                 'ffmpeg', '-y',
                 '-rtsp_transport', 'tcp',
@@ -74,27 +74,39 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=FFMPEG_TIMEOUT
+                timeout=timeout
             )
 
-        # Intentar primero con URL de live feed
-        log.info(f'Probando live feed: {rtsp_url_live}')
-        result = _run_ffmpeg(rtsp_url_live)
+        # Intentar primero con URL de live feed (timeout corto: 8s)
+        jpeg_bytes = None
+        try:
+            log.info(f'Probando live feed: h264/ch{cam_num}/main/av_stream')
+            result = _run_ffmpeg(rtsp_url_live, timeout=8)
+            if result.returncode == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) >= 1024:
+                log.info('Live feed OK')
+                with open(tmp_path, 'rb') as f:
+                    jpeg_bytes = f.read()
+        except subprocess.TimeoutExpired:
+            log.warning('Live feed timeout (8s), usando tracks fallback...')
+        except Exception as e:
+            log.warning(f'Live feed error: {e}, usando tracks fallback...')
 
-        if result.returncode != 0:
-            # Fallback a tracks (funciona en DVRs que no soporten /h264/)
-            log.warning(f'Live URL fallo (cod {result.returncode}), usando tracks fallback...')
-            result = _run_ffmpeg(rtsp_url_tracks)
+        # Fallback a tracks si live fallo
+        if jpeg_bytes is None:
+            log.info(f'Usando tracks: PSIA/Streaming/tracks/{canal}')
+            result = _run_ffmpeg(rtsp_url_tracks, timeout=FFMPEG_TIMEOUT)
 
-        if result.returncode != 0:
-            stderr = result.stderr[-600:] if result.stderr else '(sin stderr)'
-            raise RuntimeError(f'ffmpeg error (cod {result.returncode}): {stderr}')
+            if result.returncode != 0:
+                stderr = result.stderr[-600:] if result.stderr else '(sin stderr)'
+                raise RuntimeError(f'ffmpeg error (cod {result.returncode}): {stderr}')
 
-        if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) < 1024:
-            raise RuntimeError('El fotograma capturado esta vacio o es invalido.')
+            if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) < 1024:
+                raise RuntimeError('El fotograma capturado esta vacio o es invalido.')
 
-        with open(tmp_path, 'rb') as f:
-            return f.read()
+            with open(tmp_path, 'rb') as f:
+                jpeg_bytes = f.read()
+
+        return jpeg_bytes
 
     finally:
         if os.path.exists(tmp_path):
