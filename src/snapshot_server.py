@@ -27,6 +27,9 @@ import json
 import os
 import subprocess
 import tempfile
+import urllib.request
+import urllib.error
+import base64
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 from . import config
@@ -34,19 +37,60 @@ from .logger import get_logger
 
 log = get_logger('snapshot_server')
 
-SNAPSHOT_PORT = int(os.getenv('SNAPSHOT_PORT', '8765'))
-FFMPEG_TIMEOUT = 20  # segundos maximos para capturar un frame
+SNAPSHOT_PORT  = int(os.getenv('SNAPSHOT_PORT', '8765'))
+FFMPEG_TIMEOUT = 20   # segundos maximos para capturar un frame via RTSP
+ISAPI_TIMEOUT  = 5    # segundos para el intento ISAPI HTTP (debe ser rapido)
+
+
+def _isapi_snapshot(usuario: str, clave: str,
+                    vps_ip: str, puerto_http: int,
+                    canal: int) -> bytes | None:
+    """
+    Intenta capturar un frame via ISAPI HTTP (DVR moderno con firmware compatible).
+    Devuelve bytes JPEG si tiene exito, o None si el DVR no lo soporta.
+    Canal: 101 → /ISAPI/Streaming/channels/101/picture (mismo numero)
+    """
+    url = f"http://{vps_ip}:{puerto_http}/ISAPI/Streaming/channels/{canal}/picture"
+    credentials = base64.b64encode(f"{usuario}:{clave}".encode()).decode()
+    req = urllib.request.Request(url)
+    req.add_header('Authorization', f'Basic {credentials}')
+    req.add_header('Accept', 'image/jpeg, */*')
+    try:
+        with urllib.request.urlopen(req, timeout=ISAPI_TIMEOUT) as resp:
+            ct = resp.headers.get('Content-Type', '')
+            if resp.status == 200 and 'image' in ct:
+                data = resp.read()
+                if len(data) > 1024:
+                    log.info(f'ISAPI HTTP OK: {len(data)//1024}KB (canal {canal})')
+                    return data
+            log.warning(f'ISAPI HTTP respuesta inesperada: status={resp.status} ct={ct}')
+    except urllib.error.HTTPError as e:
+        log.warning(f'ISAPI HTTP {e.code}: firmware no compatible (canal {canal})')
+    except Exception as e:
+        log.warning(f'ISAPI HTTP error: {e}')
+    return None
+
 
 
 def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
-                   canal: int, vps_ip: str = '127.0.0.1') -> bytes:
+                   canal: int, vps_ip: str = '127.0.0.1',
+                   puerto_http: int = 0) -> bytes:
     """
-    Captura un fotograma JPEG del DVR via RTSP usando ffmpeg.
-    Usa /Streaming/Channels/ (stream EN VIVO) para obtener la imagen
-    del momento actual, no de grabaciones almacenadas.
+    Captura un fotograma JPEG del DVR.
+    Estrategia (mejor a peor):
+      1. ISAPI HTTP   — DVR moderno con firmware compatible → live inmediato
+      2. RTSP+tiempo  — DVR firmware antiguo              → ~5 min lag
+      3. RTSP inicial — ultimo recurso                    → primer frame historico
     Canal: 101=cam1, 201=cam2, 301=cam3, 401=cam4
-    Retorna los bytes del JPEG o lanza RuntimeError si falla.
     """
+    # ── Estrategia 1: ISAPI HTTP (solo si hay tunel HTTP disponible) ──────────
+    if puerto_http > 0:
+        log.info(f'Intentando ISAPI HTTP puerto={puerto_http} canal={canal}')
+        datos = _isapi_snapshot(usuario, clave, vps_ip, puerto_http, canal)
+        if datos:
+            return datos
+        log.info('ISAPI falló → usando RTSP/ffmpeg...')
+
     # Derivar numero de camara desde el canal Hikvision
     # canal: 101=cam1, 201=cam2, 301=cam3, 401=cam4
     cam_num = canal // 100  # 101 -> 1, 201 -> 2, etc.
@@ -185,11 +229,12 @@ class SnapshotHandler(BaseHTTPRequestHandler):
             self._send_json(400, {'success': False, 'message': f'JSON invalido: {e}'})
             return
 
-        usuario     = params.get('usuario', '').strip()
-        clave       = params.get('clave', '').strip()
-        puerto_rtsp = int(params.get('puerto_rtsp', 0))
-        canal       = int(params.get('canal', 101))
-        vps_ip      = params.get('vps_ip', '127.0.0.1').strip()
+        usuario      = params.get('usuario', '').strip()
+        clave        = params.get('clave', '').strip()
+        puerto_rtsp  = int(params.get('puerto_rtsp', 0))
+        puerto_http  = int(params.get('puerto_http', 0))   # 0 = sin tunel HTTP
+        canal        = int(params.get('canal', 101))
+        vps_ip       = params.get('vps_ip', '127.0.0.1').strip()
 
         if not usuario or not clave or not puerto_rtsp:
             self._send_json(400, {
@@ -198,13 +243,15 @@ class SnapshotHandler(BaseHTTPRequestHandler):
             })
             return
 
+        metodo = 'ISAPI+RTSP' if puerto_http > 0 else 'RTSP'
         log.info(
             f'Snapshot solicitado: vps={vps_ip}:{puerto_rtsp} '
-            f'canal={canal} usuario={usuario}'
+            f'canal={canal} usuario={usuario} metodo={metodo}'
         )
 
         try:
-            jpeg_bytes = _capture_frame(usuario, clave, puerto_rtsp, canal, vps_ip)
+            jpeg_bytes = _capture_frame(usuario, clave, puerto_rtsp, canal, vps_ip,
+                                        puerto_http=puerto_http)
             log.info(f'Snapshot OK: {len(jpeg_bytes) // 1024}KB')
             self._send_jpeg(jpeg_bytes)
         except subprocess.TimeoutExpired:
