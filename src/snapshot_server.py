@@ -57,8 +57,8 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
     # Pedimos de 5 a 3 minutos atras: segmento ya escrito al disco.
     # Formato: YYYYMMDDTHHMMSSZ con hora NI (UTC-6).
     now_ni    = datetime.utcnow() - timedelta(hours=6)
-    start_ni  = now_ni - timedelta(minutes=5)
-    end_ni    = now_ni - timedelta(minutes=3)
+    start_ni  = now_ni - timedelta(minutes=2)
+    end_ni    = now_ni - timedelta(minutes=1)
     start_str = start_ni.strftime("%Y%m%dT%H%M%SZ")
     end_str   = end_ni.strftime("%Y%m%dT%H%M%SZ")
 
