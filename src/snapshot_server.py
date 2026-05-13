@@ -51,13 +51,25 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
     # canal: 101=cam1, 201=cam2, 301=cam3, 401=cam4
     cam_num = canal // 100  # 101 -> 1, 201 -> 2, etc.
 
-    # Sin starttime/endtime: el DVR entrega el stream actual del canal.
-    # (starttime causa 400 en canales sin grabacion continua)
-    rtsp_url_tracks = (
+    # El DVR sin starttime devuelve el PRIMER frame historico (ej: 03/03 09:05).
+    # Con starttime=AHORA devuelve el frame actual — igual que hace el worker.
+    # El DVR trata el timestamp como hora local NI (UTC-6), no UTC real.
+    from datetime import datetime, timedelta
+    now_ni    = datetime.utcnow() - timedelta(hours=6)
+    end_ni    = now_ni + timedelta(seconds=30)
+    start_str = now_ni.strftime("%Y%m%dT%H%M%SZ")
+    end_str   = end_ni.strftime("%Y%m%dT%H%M%SZ")
+
+    rtsp_url_now    = (
+        f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}"
+        f"/PSIA/Streaming/tracks/{canal}"
+        f"?starttime={start_str}&endtime={end_str}"
+    )
+    rtsp_url_inicio = (
         f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}"
         f"/PSIA/Streaming/tracks/{canal}"
     )
-    rtsp_url_live = f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}/h264/ch{cam_num}/main/av_stream"
+    rtsp_url_live   = f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}/h264/ch{cam_num}/main/av_stream"
 
     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
         tmp_path = tmp.name
@@ -80,34 +92,35 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
                 timeout=timeout
             )
 
-        # Intentar primero con URL de live feed (timeout corto: 8s)
+        # ── Orden de intentos: mejor a peor ─────────────────────────────
+        # 1. tracks con starttime=AHORA  → frame del momento exacto
+        # 2. h264 live                   → stream en vivo (no funciona en todos los modelos)
+        # 3. tracks sin starttime        → primer frame historico (03/03 09:05)
+        intentos = [
+            ('starttime=ahora',  rtsp_url_now,    FFMPEG_TIMEOUT),
+            ('h264 live',        rtsp_url_live,   8),
+            ('tracks historico', rtsp_url_inicio, FFMPEG_TIMEOUT),
+        ]
+
         jpeg_bytes = None
-        try:
-            log.info(f'Probando live feed: h264/ch{cam_num}/main/av_stream')
-            result = _run_ffmpeg(rtsp_url_live, timeout=8)
-            if result.returncode == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) >= 1024:
-                log.info('Live feed OK')
-                with open(tmp_path, 'rb') as f:
-                    jpeg_bytes = f.read()
-        except subprocess.TimeoutExpired:
-            log.warning('Live feed timeout (8s), usando tracks fallback...')
-        except Exception as e:
-            log.warning(f'Live feed error: {e}, usando tracks fallback...')
+        for nombre, url, timeout in intentos:
+            try:
+                log.info(f'Probando [{nombre}]: ...tracks/{canal}')
+                result = _run_ffmpeg(url, timeout=timeout)
+                if result.returncode == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) >= 1024:
+                    log.info(f'OK con [{nombre}]: {os.path.getsize(tmp_path)//1024}KB')
+                    with open(tmp_path, 'rb') as f:
+                        jpeg_bytes = f.read()
+                    break
+                else:
+                    log.warning(f'[{nombre}] fallo (cod {result.returncode}), siguiente...')
+            except subprocess.TimeoutExpired:
+                log.warning(f'[{nombre}] timeout ({timeout}s), siguiente...')
+            except Exception as e:
+                log.warning(f'[{nombre}] error: {e}, siguiente...')
 
-        # Fallback a tracks si live fallo
         if jpeg_bytes is None:
-            log.info(f'Usando tracks: PSIA/Streaming/tracks/{canal}')
-            result = _run_ffmpeg(rtsp_url_tracks, timeout=FFMPEG_TIMEOUT)
-
-            if result.returncode != 0:
-                stderr = result.stderr[-600:] if result.stderr else '(sin stderr)'
-                raise RuntimeError(f'ffmpeg error (cod {result.returncode}): {stderr}')
-
-            if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) < 1024:
-                raise RuntimeError('El fotograma capturado esta vacio o es invalido.')
-
-            with open(tmp_path, 'rb') as f:
-                jpeg_bytes = f.read()
+            raise RuntimeError('Todos los metodos de captura fallaron. Verifica tunel y grabacion del DVR.')
 
         return jpeg_bytes
 
