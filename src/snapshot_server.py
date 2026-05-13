@@ -52,15 +52,17 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
     cam_num = canal // 100  # 101 -> 1, 201 -> 2, etc.
 
     # El DVR sin starttime devuelve el PRIMER frame historico (ej: 03/03 09:05).
-    # Con starttime=AHORA devuelve el frame actual — igual que hace el worker.
-    # El DVR trata el timestamp como hora local NI (UTC-6), no UTC real.
     from datetime import datetime, timedelta
+    # El DVR rechaza rangos demasiado recientes (segmento no finalizado).
+    # Pedimos de 5 a 3 minutos atras: segmento ya escrito al disco.
+    # Formato: YYYYMMDDTHHMMSSZ con hora NI (UTC-6).
     now_ni    = datetime.utcnow() - timedelta(hours=6)
-    start_ni  = now_ni - timedelta(seconds=30)
-    end_ni    = now_ni
+    start_ni  = now_ni - timedelta(minutes=5)
+    end_ni    = now_ni - timedelta(minutes=3)
     start_str = start_ni.strftime("%Y%m%dT%H%M%SZ")
     end_str   = end_ni.strftime("%Y%m%dT%H%M%SZ")
 
+    log.info(f'Rango NI: {start_str} → {end_str}')
     rtsp_url_now    = (
         f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}"
         f"/PSIA/Streaming/tracks/{canal}"
