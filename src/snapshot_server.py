@@ -57,8 +57,10 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
     # Pedimos de 5 a 3 minutos atras: segmento ya escrito al disco.
     # Formato: YYYYMMDDTHHMMSSZ con hora NI (UTC-6).
     now_ni    = datetime.utcnow() - timedelta(hours=6)
-    start_ni  = now_ni - timedelta(minutes=2)
-    end_ni    = now_ni - timedelta(minutes=1)
+    # DVR graba en segmentos de 5 min — solo accesibles tras cerrarse.
+    # Minimo lag real = ~5 min (limitacion del hardware DS-7104HGHI-M1).
+    start_ni  = now_ni - timedelta(minutes=7)   # ventana de 7 a 5 min atras
+    end_ni    = now_ni - timedelta(minutes=5)
     start_str = start_ni.strftime("%Y%m%dT%H%M%SZ")
     end_str   = end_ni.strftime("%Y%m%dT%H%M%SZ")
 
