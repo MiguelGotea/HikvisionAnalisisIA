@@ -3,6 +3,8 @@ REM ============================================================
 REM tunel_dvr_granada.bat — Tunel SSH permanente DVR Granada
 REM Sucursal: Granada | cod_sucursal: 10
 REM Puerto VPS RTSP : 9554  (-> 192.168.1.100:554)
+REM Puerto VPS HTTP : 9654  (-> 192.168.1.100:80)  ISAPI soportado
+REM DVR: DS-104G-K1 Hikvision — firmware con ISAPI activo
 REM ============================================================
 
 :loop
