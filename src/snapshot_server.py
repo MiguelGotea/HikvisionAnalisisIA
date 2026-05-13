@@ -51,10 +51,23 @@ def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
     # canal: 101=cam1, 201=cam2, 301=cam3, 401=cam4
     cam_num = canal // 100  # 101 -> 1, 201 -> 2, etc.
 
-    # /h264/chX/main/av_stream = stream EN VIVO (imagen del momento actual)
-    # /PSIA/Streaming/tracks/X = puede entregar grabacion almacenada (no live)
-    rtsp_url_live   = f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}/h264/ch{cam_num}/main/av_stream"
-    rtsp_url_tracks = f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}/PSIA/Streaming/tracks/{canal}"
+    # El DVR HiLook/Hikvision almacena grabaciones por HORA LOCAL (NI = UTC-6).
+    # Enviamos la hora NI directamente sin convertir a UTC (igual que downloader.py).
+    # Sin starttime, el DVR devuelve desde el inicio del buffer (ej: 09:05 AM).
+    from datetime import datetime, timedelta
+    now_ni  = datetime.utcnow() - timedelta(hours=6)          # hora Nicaragua actual
+    end_ni  = now_ni + timedelta(seconds=30)                   # ventana de 30s
+    start_str = now_ni.strftime("%Y%m%dT%H%M%SZ")
+    end_str   = end_ni.strftime("%Y%m%dT%H%M%SZ")
+
+    # URL con hora actual → frame del momento del click
+    rtsp_url_tracks = (
+        f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}"
+        f"/PSIA/Streaming/tracks/{canal}"
+        f"?starttime={start_str}&endtime={end_str}"
+    )
+    # URL live alternativa (puede no funcionar en todos los modelos)
+    rtsp_url_live = f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}/h264/ch{cam_num}/main/av_stream"
 
     with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
         tmp_path = tmp.name
