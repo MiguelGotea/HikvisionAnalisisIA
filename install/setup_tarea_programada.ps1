@@ -78,7 +78,8 @@ $accion = New-ScheduledTaskAction `
 
 # Disparador: Al iniciar el sistema + delay de 30s para que la red este lista
 $disparador = New-ScheduledTaskTrigger -AtStartup
-$disparador.Delay = "PT30S"  # Esperar 30 segundos despues del arranque
+$disparador.Delay = "PT60S"  # Esperar 60s despues del arranque (para PCs lentas con WiFi demorado)
+                              # El .bat tiene loop propio cada 10s, asi que si falla el primer intento se recupera solo
 
 # Configuracion: ejecutar con privilegios altos, aunque el usuario no este conectado
 # NOTA: NO usar -RunOnlyIfNetworkAvailable porque el trigger se dispara antes de que
