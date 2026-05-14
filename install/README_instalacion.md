@@ -191,3 +191,169 @@ ss -tlnp | grep -E "955[0-9]|957[0-9]|958[0-9]"
 # Estado del servicio
 systemctl status hikvision-worker
 ```
+
+---
+
+## 🔍 Diagnóstico — Túnel Granada no arranca (puerto 9554)
+
+Sigue estos pasos **en orden** para encontrar la causa exacta.
+
+### PASO 1 — Verificar que la tarea existe y su estado
+
+En **PowerShell** (no importa si es admin):
+
+```powershell
+# Estado general de la tarea
+Get-ScheduledTask -TaskName "TunelDVR_Granada" | Select-Object TaskName, State
+
+# Última vez que corrió y resultado
+Get-ScheduledTaskInfo -TaskName "TunelDVR_Granada" | Select-Object LastRunTime, LastTaskResult, NextRunTime
+```
+
+| `State`   | Significado                                    |
+|-----------|------------------------------------------------|
+| `Running` | ✅ Está corriendo — el túnel está activo        |
+| `Ready`   | ⚠️ Lista pero no ha corrido (o cayó y espera)  |
+| `Disabled`| ❌ Fue deshabilitada manualmente               |
+
+`LastTaskResult = 0` = éxito. Cualquier otro número es un código de error.
+
+---
+
+### PASO 2 — Iniciar la tarea manualmente y ver si levanta
+
+```powershell
+# Iniciar
+Start-ScheduledTask -TaskName "TunelDVR_Granada"
+Start-Sleep -Seconds 5
+
+# Verificar si quedó corriendo
+Get-ScheduledTask -TaskName "TunelDVR_Granada" | Select-Object State
+```
+
+Si el State vuelve a `Ready` en segundos → el proceso muere inmediatamente (problema de llave SSH o known_hosts).
+
+---
+
+### PASO 3 — Probar el SSH manualmente en CMD (como usuario normal)
+
+Esto descarta si el problema es de red/llave antes de culpar a la tarea:
+
+```cmd
+ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 0.0.0.0:9554:192.168.1.100:554 -R 0.0.0.0:9654:192.168.1.100:80 root@198.211.97.243 -N
+```
+
+- ✅ **Queda parpadeando** = SSH funciona, el problema está en la tarea (llave de SYSTEM)
+- ❌ **Falla inmediato** = Problema de red, llave no registrada en VPS, o DVR apagado
+- ❌ **Pide contraseña** = La llave pública no está en el VPS (`authorized_keys`)
+
+---
+
+### PASO 4 — Verificar llave SSH del usuario SYSTEM
+
+La tarea corre como `SYSTEM`, que usa su propia carpeta `.ssh`. Verificar en **PowerShell Admin**:
+
+```powershell
+# Ver si la llave existe para SYSTEM
+Test-Path "C:\Windows\System32\config\systemprofile\.ssh\id_ed25519"
+# Debe retornar: True
+
+Test-Path "C:\Windows\System32\config\systemprofile\.ssh\known_hosts"
+# Debe retornar: True
+
+# Ver contenido del known_hosts de SYSTEM
+Get-Content "C:\Windows\System32\config\systemprofile\.ssh\known_hosts"
+# Debe tener la línea con 198.211.97.243
+```
+
+**Si `known_hosts` está vacío** → SYSTEM nunca conectó y el SSH muere porque no puede aceptar el host interactivamente.
+
+Solución rápida (PowerShell Admin):
+```powershell
+# Copiar known_hosts del usuario actual a SYSTEM
+Copy-Item "$env:USERPROFILE\.ssh\known_hosts" `
+          "C:\Windows\System32\config\systemprofile\.ssh\known_hosts" -Force
+
+# Copiar también la llave por si acaso
+Copy-Item "$env:USERPROFILE\.ssh\id_ed25519" `
+          "C:\Windows\System32\config\systemprofile\.ssh\id_ed25519" -Force
+
+# Reintentar la tarea
+Start-ScheduledTask -TaskName "TunelDVR_Granada"
+```
+
+> **¿Por qué pasa esto?** El `known_hosts` de SYSTEM se llena la primera vez que SSH conecta. Si se reinstala el script sin haber conectado antes manualmente como SYSTEM, quedará vacío.
+
+---
+
+### PASO 5 — Verificar desde el VPS que el puerto 9554 abrió
+
+Conéctate al VPS y ejecuta:
+
+```bash
+# Ver si el puerto de Granada está escuchando
+ss -tlnp | grep 9554
+# Debe mostrar: LISTEN  0  128  0.0.0.0:9554  ...
+
+# Si no aparece nada → el túnel no llegó al VPS
+# Ver todos los túneles activos de una vez:
+ss -tlnp | grep -E "955[0-9]|956[0-9]|957[0-9]|958[0-9]"
+
+# Ver si el firewall del VPS permite el puerto
+ufw status | grep 9554
+# Si no aparece → agregar:
+# ufw allow 9554/tcp
+# ufw allow 9654/tcp
+```
+
+---
+
+### PASO 6 — Probar que el DVR de Granada responde por el túnel
+
+Desde el VPS, una vez que el puerto 9554 esté escuchando:
+
+```bash
+# Prueba RTSP (requiere ffmpeg en el VPS)
+ffmpeg -rtsp_transport tcp -i "rtsp://admin:CLAVE_DVR@127.0.0.1:9554/PSIA/Streaming/tracks/101" -t 5 -f null - 2>&1 | tail -10
+
+# Prueba HTTP/ISAPI (más rápido, no necesita ffmpeg)
+curl -s -o /dev/null -w "%{http_code}" http://admin:CLAVE_DVR@127.0.0.1:9654/ISAPI/System/deviceInfo
+# Debe retornar: 200
+```
+
+---
+
+### PASO 7 — Ver logs de la tarea en el Visor de Eventos
+
+Si los pasos anteriores no dan pistas, abrir el **Visor de Eventos** de Windows:
+
+```
+Eventos de aplicaciones y servicios → Microsoft → Windows → TaskScheduler → Operational
+```
+
+O con PowerShell:
+```powershell
+Get-WinEvent -LogName "Microsoft-Windows-TaskScheduler/Operational" |
+  Where-Object { $_.Message -like "*Granada*" } |
+  Select-Object TimeCreated, Id, Message |
+  Format-List
+```
+
+Códigos de error comunes de la tarea:
+| Código | Causa más probable                                     |
+|--------|--------------------------------------------------------|
+| `0x1`  | El `.bat` no se encontró en `C:\tunel_dvr_granada.bat` |
+| `0x2`  | El archivo bat existe pero SSH no está en PATH         |
+| `0xC000013A` | El proceso fue terminado (normal si el túnel cayó) |
+
+---
+
+### Resumen de causas más comunes
+
+| Síntoma                              | Causa probable                        | Solución                          |
+|--------------------------------------|---------------------------------------|-----------------------------------|
+| Tarea en `Ready`, no corre           | Tarea deshabilitada o bat no existe   | Verificar ruta `C:\tunel_dvr_granada.bat` |
+| Tarea corre pero muere en segundos   | `known_hosts` de SYSTEM vacío        | Paso 4 — copiar known_hosts       |
+| SSH manual funciona, tarea no        | Llave no copiada al perfil SYSTEM     | Volver a correr el `.ps1`         |
+| VPS no muestra puerto 9554           | Firewall VPS bloqueando               | `ufw allow 9554/tcp && ufw allow 9654/tcp` |
+| Puerto 9554 activo pero DVR no responde | DVR apagado o IP incorrecta        | Verificar `192.168.1.100` en la red local |
