@@ -76,16 +76,19 @@ $accion = New-ScheduledTaskAction `
     -Execute "cmd.exe" `
     -Argument "/c `"$BatPath`""
 
-# Disparador: Al iniciar el sistema (antes de que el usuario inicie sesion)
+# Disparador: Al iniciar el sistema + delay de 30s para que la red este lista
 $disparador = New-ScheduledTaskTrigger -AtStartup
+$disparador.Delay = "PT30S"  # Esperar 30 segundos despues del arranque
 
 # Configuracion: ejecutar con privilegios altos, aunque el usuario no este conectado
+# NOTA: NO usar -RunOnlyIfNetworkAvailable porque el trigger se dispara antes de que
+#       la red este lista, lo que deja la tarea en estado 'Ready' sin arrancar.
+#       El .bat ya tiene su propio loop de reconexion cada 10 segundos.
 $config = New-ScheduledTaskSettingsSet `
     -ExecutionTimeLimit (New-TimeSpan -Hours 0) `
     -RestartCount 10 `
     -RestartInterval (New-TimeSpan -Minutes 1) `
-    -StartWhenAvailable `
-    -RunOnlyIfNetworkAvailable
+    -StartWhenAvailable
 
 # Principal: correr como SYSTEM para no depender de login de usuario
 $principal = New-ScheduledTaskPrincipal `
