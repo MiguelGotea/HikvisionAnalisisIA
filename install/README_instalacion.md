@@ -72,8 +72,8 @@ ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax
 
 Mientras parpadea, verificar en el VPS que el puerto esta escuchando:
 ```bash
-ss -tlnp | grep 9579
-# Debe mostrar: LISTEN 0  128  0.0.0.0:9579 ...
+ss -tlnp | grep 9552
+# Debe mostrar: LISTEN 0  128  0.0.0.0:9552 ...
 ```
 
 `Ctrl+C` para salir cuando termines de probar.
@@ -127,7 +127,7 @@ ss -tlnp | grep -E "955[0-9]|957[0-9]|958[0-9]"
 
 Probar que el DVR responde a traves del tunel:
 ```bash
-ffmpeg -rtsp_transport tcp -i "rtsp://admin:Nihonk03@127.0.0.1:9581/PSIA/Streaming/tracks/101" -t 5 -f null - 2>&1 | tail -5
+ffmpeg -rtsp_transport tcp -i "rtsp://admin:abcd1234@127.0.0.1:9552/PSIA/Streaming/tracks/101" -t 5 -f null - 2>&1 | tail -5
 ```
 
 ---
