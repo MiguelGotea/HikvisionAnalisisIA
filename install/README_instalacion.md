@@ -96,7 +96,7 @@ Copy-Item "C:\Users\Pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGua
 Abrir **PowerShell como Administrador** y ejecutar:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass -File "C:\users\pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\setup_tarea_programada.ps1" -BatPath "C:\tunel_dvr_granada.bat" -NombreTarea "TunelDVR_Granada"
+powershell.exe -ExecutionPolicy Bypass -File "C:\users\pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\setup_tarea_programada.ps1" -BatPath "C:\tunel_dvr_lascolinas.bat" -NombreTarea "TunelDVR_Lascolinas"
 ```
 
 > **Ajusta** `-BatPath` y `-NombreTarea` segun la sucursal. Ejemplos:
@@ -130,7 +130,7 @@ ss -tlnp | grep -E "955[0-9]|957[0-9]|958[0-9]"
 
 Probar que el DVR responde a traves del tunel:
 ```bash
-ffmpeg -rtsp_transport tcp -i "rtsp://admin:CLAVE@127.0.0.1:9579/PSIA/Streaming/tracks/101" -t 5 -f null - 2>&1 | tail -5
+ffmpeg -rtsp_transport tcp -i "rtsp://admin:Nihonk03@127.0.0.1:9581/PSIA/Streaming/tracks/101" -t 5 -f null - 2>&1 | tail -5
 ```
 
 ---
