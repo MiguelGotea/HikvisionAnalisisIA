@@ -33,7 +33,7 @@ Si la PC es nueva, genera una llave y autorizala en el VPS:
 
 1. **Generar la llave** (presiona Enter a todo, sin contrasena):
    ```powershell
-   ssh-keygen -t ed25519 -C "sucursal_nombre"
+   ssh-keygen -t ed25519 -C "sucursal_leon"
    ```
 
 2. **Copiar la llave publica**:
@@ -67,7 +67,7 @@ ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax
 
 Ejemplo para Villa Fontana:
 ```cmd
-ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 0.0.0.0:9579:192.168.1.90:554 root@198.211.97.243 -N
+ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 0.0.0.0:9552:192.168.1.20:554 root@198.211.97.243 -N
 ```
 
 Mientras parpadea, verificar en el VPS que el puerto esta escuchando:
@@ -84,11 +84,6 @@ ss -tlnp | grep 9579
 
 Copiar el archivo `.bat` correspondiente a la sucursal a `C:\`:
 
-```powershell
-# Ejemplo: copiar desde Google Drive al disco C
-Copy-Item "C:\Users\Pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\tunel_dvr_lascolinas.bat" "C:\tunel_dvr_lascolinas.bat"
-```
-
 ---
 
 ## Paso 5 — Instalar la tarea programada (como Administrador)
@@ -97,6 +92,8 @@ Abrir **PowerShell como Administrador** y ejecutar:
 
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File "C:\users\pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\setup_tarea_programada.ps1" -BatPath "C:\tunel_dvr_lascolinas.bat" -NombreTarea "TunelDVR_Lascolinas"
+
+powershell.exe -ExecutionPolicy Bypass -File "C:\users\BatidosPitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\setup_tarea_programada.ps1" -BatPath "C:\tunel_dvr_leon.bat" -NombreTarea "TunelDVR_Leon"
 ```
 
 > **Ajusta** `-BatPath` y `-NombreTarea` segun la sucursal. Ejemplos:
@@ -159,7 +156,7 @@ ffmpeg -rtsp_transport tcp -i "rtsp://admin:Nihonk03@127.0.0.1:9581/PSIA/Streami
 
 ```powershell
 # Ver estado de la tarea (reemplaza el nombre segun sucursal)
-Get-ScheduledTask -TaskName "TunelDVR_VillaFontana"
+Get-ScheduledTask -TaskName "TunelDVR_Leon"
 
 # Iniciar manualmente
 Start-ScheduledTask -TaskName "TunelDVR_VillaFontana"
@@ -204,7 +201,7 @@ En **PowerShell** (no importa si es admin):
 
 ```powershell
 # Estado general de la tarea
-Get-ScheduledTask -TaskName "TunelDVR_Granada" | Select-Object TaskName, State
+Get-ScheduledTask -TaskName "TunelDVR_Leon" | Select-Object TaskName, State
 
 # Última vez que corrió y resultado
 Get-ScheduledTaskInfo -TaskName "TunelDVR_Granada" | Select-Object LastRunTime, LastTaskResult, NextRunTime
