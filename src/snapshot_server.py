@@ -1,26 +1,32 @@
 """
-snapshot_server.py — Servidor HTTP minimo para captura de fotogramas via ffmpeg/RTSP.
+snapshot_server.py — Servidor HTTP para captura de fotogramas DVR Hikvision.
 
-Corre en el VPS junto al worker. Acepta peticiones del ERP para capturar
-un frame de cualquier camara a traves del tunel SSH activo.
+Corre en el VPS junto al worker. Acepta peticiones del ERP y captura
+un frame del DVR a través del túnel SSH activo.
+
+Estrategia de captura (orden de prioridad):
+  1. ISAPI HTTP Digest  — DVR moderno (firmware con ISAPI)   → EN VIVO inmediato
+  2. RTSP + starttime   — DVR firmware antiguo (DS-7104 etc) → ~5 min atrás
+  3. RTSP sin tiempo    — último recurso                      → primer frame histórico
 
 Puerto: SNAPSHOT_PORT (default 8765)
-Token:  HIK_API_TOKEN (mismo del worker)
+Token:  HIK_API_TOKEN (variable de entorno en .env)
 
 POST /snapshot
   Headers: X-WSP-Token: <token>
   Body JSON: {
-    "usuario":     "admin",
-    "clave":       "Nihonk03",
-    "puerto_rtsp": 9579,
-    "canal":       101,
-    "vps_ip":      "127.0.0.1"   (opcional)
+    "usuario":      "admin",
+    "clave":        "CLAVE_DVR",
+    "puerto_rtsp":  9554,          ← siempre requerido
+    "puerto_http":  9654,          ← opcional; 0/ausente = usar solo RTSP
+    "canal":        101,           ← 101=cam1, 201=cam2, 301=cam3, 401=cam4
+    "vps_ip":       "127.0.0.1"   ← opcional
   }
-  Response exito:  Content-Type: image/jpeg  + bytes JPEG
-  Response error:  Content-Type: application/json + {"success": false, "message": "..."}
+  Respuesta éxito: Content-Type: image/jpeg + bytes JPEG
+  Respuesta error: Content-Type: application/json + {"success": false, "message": "..."}
 
 GET /health
-  Response: {"status": "ok", "service": "hikvision-snapshot"}
+  Respuesta: {"status": "ok", "service": "hikvision-snapshot"}
 """
 
 import json
