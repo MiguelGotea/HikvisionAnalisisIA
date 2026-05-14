@@ -1,184 +1,164 @@
-# Guía de Instalación — Túnel SSH DVR por Sucursal
+# Guia de Instalacion — Tunel SSH DVR por Sucursal
 
-## Arquitectura del sistema
+## Requisitos previos (en cada PC de sucursal)
 
-```
-PC Sucursal  ─SSH Tunnel─►  VPS (198.211.97.243)  ◄─HTTP─  ERP (Hostinger)
-   DVR local                  snapshot_server :8765
-                              Puerto RTSP :9554–9590
-                              Puerto HTTP :9654–9690  (DVR moderno, ISAPI)
-```
-
-El **snapshot_server** detecta automáticamente el tipo de DVR:
-- **DVR moderno (ISAPI)** → usa `puerto_http_vps` → imagen **en vivo instantánea**
-- **DVR firmware antiguo** → usa `puerto_rtsp_vps` + ffmpeg → imagen de **~5 min atrás** (segmento de grabación)
+- Windows 10/11 con OpenSSH instalado
+- La llave SSH `id_ed25519` registrada en el VPS (`~/.ssh/authorized_keys`)
+- Acceso a Internet y al DVR local
 
 ---
 
-## Sucursales — Puertos configurados
+## Sucursales — Puertos y archivos
 
-| Sucursal      | cod | Archivo bat                   | RTSP VPS | HTTP VPS | DVR IP            | Tipo        |
-|---------------|:---:|-------------------------------|:--------:|:--------:|-------------------|-------------|
-| Leon          | 2   | `tunel_dvr_leon.bat`          | 9552     | —        | 192.168.1.20      | RTSP only   |
-| Matagalpa     | 4   | `tunel_dvr_matagalpa.bat`     | 9574     | —        | 192.168.1.40      | RTSP only   |
-| Esteli        | 5   | `tunel_dvr_esteli.bat`        | 9575     | —        | 192.168.1.50      | RTSP only   |
-| Altamira      | 7   | `tunel_dvr_altamira.bat`      | 9577     | —        | 192.168.1.70      | RTSP only   |
-| Villa Fontana | 9   | `tunel_dvr_villafontana.bat`  | 9579     | —        | 192.168.1.90      | RTSP only   |
-| Granada       | 10  | `tunel_dvr_granada.bat`       | 9554     | 9654     | 192.168.1.100     | **ISAPI** ✅ |
-| Las Colinas   | 11  | `tunel_dvr_lascolinas.bat`    | 9581     | —        | 192.168.1.110     | RTSP only   |
-| Masaya        | 12  | `tunel_dvr_masaya.bat`        | 9582     | —        | 192.168.1.120     | RTSP only   |
-| Natura        | 13  | `tunel_dvr_natura.bat`        | 9583     | —        | 192.168.1.130     | RTSP only   |
-| Las Brisas    | 16  | `tunel_dvr_lasbrisas.bat`     | 9561     | —        | 192.168.0.160     | RTSP only   |
-| Rivas         | 17  | `tunel_dvr_rivas.bat`         | 9587     | —        | 192.168.40.170    | RTSP only   |
-| Oficinas      | 18  | `tunel_dvr_oficinas.bat`      | 9588     | —        | 192.168.0.200     | RTSP only   |
-
-> **Convención de puertos:** HTTP = RTSP + 100 (ej: RTSP 9554 → HTTP 9654)
-
-### Verificar si un DVR soporta ISAPI
-
-Desde la PC de la sucursal, abrir en el navegador:
-```
-http://admin:CLAVE@192.168.1.X:80/ISAPI/Streaming/channels/101/picture
-```
-- Si abre una imagen → soporta ISAPI → agregar `puerto_http_vps` en la BD y tunel HTTP en el `.bat`
-- Si da error → solo RTSP → dejar `puerto_http_vps` en NULL
+| Sucursal      | cod_sucursal | Archivo bat                   | Puerto VPS | DVR IP local      |
+|---------------|:------------:|-------------------------------|:----------:|-------------------|
+| Leon          | 2            | `tunel_dvr_leon.bat`          | 9552       | 192.168.1.20      |
+| Matagalpa     | 4            | `tunel_dvr_matagalpa.bat`     | 9574       | 192.168.1.40      |
+| Esteli        | 5            | `tunel_dvr_esteli.bat`        | 9575       | 192.168.1.50      |
+| Altamira      | 7            | `tunel_dvr_altamira.bat`      | 9577       | 192.168.1.70      |
+| Villa Fontana | 9            | `tunel_dvr_villafontana.bat`  | 9579       | 192.168.1.90      |
+| Granada       | 10           | `tunel_dvr_granada.bat`       | 9554       | 192.168.1.100     |
+| Las Colinas   | 11           | `tunel_dvr_lascolinas.bat`    | 9581       | 192.168.1.110     |
+| Masaya        | 12           | `tunel_dvr_masaya.bat`        | 9582       | 192.168.1.120     |
+| Natura        | 13           | `tunel_dvr_natura.bat`        | 9583       | 192.168.1.130     |
+| Las Brisas    | 16           | `tunel_dvr_lasbrisas.bat`     | 9561       | 192.168.0.160     |
+| Rivas         | 17           | `tunel_dvr_rivas.bat`         | 9587       | 192.168.40.170    |
+| Oficinas      | 18           | `tunel_dvr_oficinas.bat`      | 9588       | 192.168.0.200     |
 
 ---
 
-## Paso 1 — Generar llave SSH (si es una PC nueva)
+## Paso 1 — Generar llave SSH (si no existe)
 
-```powershell
-# En la PC de la sucursal (PowerShell)
-ssh-keygen -t ed25519 -C "sucursal_nombre"
-# Presiona Enter a todo, sin contraseña
+Si la PC es nueva, genera una llave y autorizala en el VPS:
 
-# Copiar la llave pública (empieza con "ssh-ed25519 ...")
-cat $HOME\.ssh\id_ed25519.pub
-```
+1. **Generar la llave** (presiona Enter a todo, sin contrasena):
+   ```powershell
+   ssh-keygen -t ed25519 -C "sucursal_nombre"
+   ```
+
+2. **Copiar la llave publica**:
+   ```powershell
+   cat $HOME\.ssh\id_ed25519.pub
+   # Copia el texto que empieza con "ssh-ed25519 ..."
+   ```
 
 ---
 
-## Paso 2 — Autorizar la llave en el VPS
+## Paso 2 — Registrar llave SSH en el VPS
+
+Accede al VPS desde una PC que ya tenga acceso y pega la llave:
 
 ```bash
-# En el VPS (pegar la llave copiada del paso anterior):
-echo "ssh-ed25519 AAAA... sucursal_nombre" >> ~/.ssh/authorized_keys
+# En el VPS:
+echo "pega_aqui_la_llave_copiada" >> ~/.ssh/authorized_keys
 ```
 
 ---
 
 ## Paso 3 — Probar conectividad SSH manualmente
 
-Desde la PC de la sucursal, probar que conecta sin contraseña (queda parpadeando = OK):
+La llave debe estar en `C:\Users\Pitaya\.ssh\id_ed25519` (o el usuario que corresponda).
+
+Probar que conecta sin pedir contrasena (queda parpadeando = OK):
 
 ```cmd
-# Solo RTSP (DVR firmware antiguo)
-ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 ^
-    -R 0.0.0.0:PUERTO_RTSP:DVR_IP:554 root@198.211.97.243 -N
-
-# RTSP + HTTP (DVR moderno con ISAPI)
-ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 ^
-    -R 0.0.0.0:PUERTO_RTSP:DVR_IP:554 ^
-    -R 0.0.0.0:PUERTO_HTTP:DVR_IP:80 root@198.211.97.243 -N
+ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 0.0.0.0:PUERTO:DVR_IP:554 root@198.211.97.243 -N
 ```
 
-Verificar en el VPS que el puerto escucha:
+Ejemplo para Villa Fontana:
+```cmd
+ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 0.0.0.0:9579:192.168.1.90:554 root@198.211.97.243 -N
+```
+
+Mientras parpadea, verificar en el VPS que el puerto esta escuchando:
 ```bash
-ss -tlnp | grep PUERTO_RTSP
-# Debe mostrar: LISTEN 0  128  0.0.0.0:PUERTO ...
+ss -tlnp | grep 9579
+# Debe mostrar: LISTEN 0  128  0.0.0.0:9579 ...
 ```
 
 `Ctrl+C` para salir cuando termines de probar.
 
 ---
 
-## Paso 4 — Copiar el archivo .bat a C:\
+## Paso 4 — Copiar el script bat a C:\
+
+Copiar el archivo `.bat` correspondiente a la sucursal a `C:\`:
 
 ```powershell
-Copy-Item "C:\Users\Pitaya\Google Drive BP\...\tunel_dvr_SUCURSAL.bat" "C:\tunel_dvr_SUCURSAL.bat"
+# Ejemplo: copiar desde Google Drive al disco C
+Copy-Item "C:\Users\Pitaya\Google Drive BP\...\tunel_dvr_villafontana.bat" "C:\tunel_dvr_villafontana.bat"
 ```
 
 ---
 
-## Paso 5 — Instalar tarea programada (como Administrador)
+## Paso 5 — Instalar la tarea programada (como Administrador)
+
+Abrir **PowerShell como Administrador** y ejecutar:
 
 ```powershell
-powershell.exe -ExecutionPolicy Bypass `
-  -File "C:\users\pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\setup_tarea_programada.ps1" `
-  -BatPath "C:\tunel_dvr_SUCURSAL.bat" `
-  -NombreTarea "TunelDVR_SUCURSAL"
+powershell.exe -ExecutionPolicy Bypass -File "C:\users\pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\setup_tarea_programada.ps1" -BatPath "C:\tunel_dvr_granada.bat" -NombreTarea "TunelDVR_Granada"
 ```
 
-El script automáticamente:
+> **Ajusta** `-BatPath` y `-NombreTarea` segun la sucursal. Ejemplos:
+> - `-BatPath "C:\tunel_dvr_granada.bat" -NombreTarea "TunelDVR_Granada"`
+> - `-BatPath "C:\tunel_dvr_leon.bat" -NombreTarea "TunelDVR_Leon"`
+
+El script automaticamente:
 - Copia la llave SSH al perfil SYSTEM (`C:\Windows\System32\config\systemprofile\.ssh\`)
 - Copia el known_hosts para evitar prompts interactivos
-- Crea la tarea programada que arranca con Windows como cuenta `SYSTEM`
-- Pregunta si iniciar el túnel inmediatamente
+- Crea la tarea programada que arranca con Windows
+- Pregunta si iniciar el tunel inmediatamente
+
+La tarea:
+- Se ejecuta como `SYSTEM` (no necesita usuario conectado)
+- Arranca automaticamente con Windows
+- Se reconecta si el tunel cae (loop cada 10 segundos)
 
 ---
 
-## Paso 6 — Verificar desde el VPS
+## Paso 6 — Verificar el tunel desde el VPS
+
+Desde el VPS, verificar que el puerto esta escuchando:
 
 ```bash
-# Ver puertos de la sucursal
+# Ver tunel especifico (ejemplo Villa Fontana)
 ss -tlnp | grep 9579
 
-# Ver todos los túneles activos
-ss -tlnp | grep -E "955[0-9]|956[0-9]|957[0-9]|958[0-9]"
-
-# Probar DVR (RTSP) — reemplaza puerto y clave
-ffmpeg -rtsp_transport tcp \
-  -i "rtsp://admin:CLAVE@127.0.0.1:PUERTO_RTSP/PSIA/Streaming/tracks/101" \
-  -frames:v 1 /tmp/test_tunel.jpg -y && file /tmp/test_tunel.jpg
-
-# Probar DVR moderno (ISAPI HTTP)
-curl --digest --user admin:CLAVE \
-  http://127.0.0.1:PUERTO_HTTP/ISAPI/Streaming/channels/101/picture \
-  -o /tmp/test_isapi.jpg && file /tmp/test_isapi.jpg
+# Ver todos los tuneles activos
+ss -tlnp | grep -E "955[0-9]|957[0-9]|958[0-9]"
 ```
 
----
-
-## Agregar nueva sucursal
-
-### 1. Base de datos
-
-```sql
--- DVR firmware antiguo (solo RTSP)
-UPDATE DVR_Sucursales
-SET puerto_rtsp_vps = 9579,
-    canal_caja      = 101,
-    tunel_activo    = 1,
-    puerto_http_vps = NULL      -- sin ISAPI
-WHERE cod_sucursal = 9;
-
--- DVR moderno (ISAPI + RTSP)
-UPDATE DVR_Sucursales
-SET puerto_rtsp_vps = 9554,
-    puerto_http_vps = 9654,     -- HTTP = RTSP + 100
-    canal_caja      = 101,
-    tunel_activo    = 1
-WHERE cod_sucursal = 10;
-```
-
-### 2. Firewall VPS
-
+Probar que el DVR responde a traves del tunel:
 ```bash
-ufw allow PUERTO_RTSP/tcp
-ufw allow PUERTO_HTTP/tcp   # Solo si el DVR soporta ISAPI
+ffmpeg -rtsp_transport tcp -i "rtsp://admin:CLAVE@127.0.0.1:9579/PSIA/Streaming/tracks/101" -t 5 -f null - 2>&1 | tail -5
 ```
-
-### 3. Archivo .bat
-
-- **Solo RTSP** → copiar cualquier `.bat` existente como Villa Fontana (sin línea HTTP)
-- **ISAPI + RTSP** → copiar `tunel_dvr_granada.bat` y ajustar IPs y puertos
 
 ---
 
-## Comandos útiles — Windows (PowerShell)
+## Para agregar una nueva sucursal
+
+1. Instalar llave SSH en la nueva PC
+2. Copiar el `.bat` con el puerto correcto a `C:\`
+3. Ejecutar `setup_tarea_programada.ps1` como Administrador
+4. En la BD, actualizar `DVR_Sucursales`:
+   ```sql
+   UPDATE DVR_Sucursales
+   SET puerto_rtsp_vps = 9579,
+       canal_caja      = 101,
+       tunel_activo    = 1
+   WHERE cod_sucursal = 9;
+   ```
+5. Abrir el puerto en el firewall del VPS:
+   ```bash
+   ufw allow 9579/tcp
+   ```
+
+---
+
+## Comandos utiles en Windows (PowerShell)
 
 ```powershell
-# Ver estado de la tarea
+# Ver estado de la tarea (reemplaza el nombre segun sucursal)
 Get-ScheduledTask -TaskName "TunelDVR_VillaFontana"
 
 # Iniciar manualmente
@@ -187,28 +167,27 @@ Start-ScheduledTask -TaskName "TunelDVR_VillaFontana"
 # Detener
 Stop-ScheduledTask -TaskName "TunelDVR_VillaFontana"
 
-# Reiniciar (aplica nuevo .bat)
-Stop-ScheduledTask  -TaskName "TunelDVR_VillaFontana"
-Start-ScheduledTask -TaskName "TunelDVR_VillaFontana"
+# Ver historial de ejecuciones
+Get-ScheduledTaskInfo -TaskName "TunelDVR_VillaFontana"
+
+# Prueba manual del tunel (queda parpadeando mientras esta activo)
+ssh -o StrictHostKeyChecking=no -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -R 0.0.0.0:9579:192.168.1.90:554 root@198.211.97.243 -N
 ```
 
 ---
 
-## Comandos útiles — VPS
+## Comandos utiles en el VPS
 
 ```bash
-# Logs del snapshot server
-journalctl -u hikvision-snapshot -n 30 --no-pager
-
-# Logs del worker de análisis IA
+# Ver logs del worker
 journalctl -u hikvision-worker -f
 
-# Reiniciar snapshot server
-systemctl restart hikvision-snapshot
+# Reiniciar el worker
+systemctl restart hikvision-worker
 
-# Estado de servicios
-systemctl status hikvision-snapshot hikvision-worker
+# Ver todos los puertos de tuneles activos
+ss -tlnp | grep -E "955[0-9]|957[0-9]|958[0-9]"
 
-# Ver todos los túneles activos
-ss -tlnp | grep -E "955[0-9]|956[0-9]|957[0-9]|958[0-9]"
+# Estado del servicio
+systemctl status hikvision-worker
 ```
