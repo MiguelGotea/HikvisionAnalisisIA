@@ -3,6 +3,8 @@ REM ============================================================
 REM tunel_dvr_oficinas.bat — Tunel SSH permanente DVR Oficinas
 REM Sucursal: Oficinas | cod_sucursal: 18
 REM Puerto VPS RTSP : 9588  (-> 192.168.0.200:554)
+REM Puerto VPS HTTP : 9688  (-> 192.168.0.200:80)  ISAPI soportado
+REM DVR: DS-7104HGHI-F1 Hikvision — firmware con ISAPI activo
 REM ============================================================
 
 :loop
@@ -12,6 +14,7 @@ ssh -o StrictHostKeyChecking=no ^
     -o ServerAliveCountMax=3 ^
     -o ExitOnForwardFailure=yes ^
     -R 0.0.0.0:9588:192.168.0.200:554 ^
+    -R 0.0.0.0:9688:192.168.0.200:80 ^
     root@198.211.97.243 -N
 
 echo [%date% %time%] Tunel caido. Reconectando en 10 segundos...

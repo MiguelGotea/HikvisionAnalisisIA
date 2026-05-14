@@ -3,6 +3,8 @@ REM ============================================================
 REM tunel_dvr_lascolinas.bat — Tunel SSH permanente DVR Las Colinas
 REM Sucursal: Las Colinas | cod_sucursal: 11
 REM Puerto VPS RTSP : 9581  (-> 192.168.1.110:554)
+REM Puerto VPS HTTP : 9681  (-> 192.168.1.110:80)  ISAPI soportado
+REM DVR: DVR-104G-K1 Hikvision — firmware con ISAPI activo
 REM ============================================================
 
 :loop
@@ -12,6 +14,7 @@ ssh -o StrictHostKeyChecking=no ^
     -o ServerAliveCountMax=3 ^
     -o ExitOnForwardFailure=yes ^
     -R 0.0.0.0:9581:192.168.1.110:554 ^
+    -R 0.0.0.0:9681:192.168.1.110:80 ^
     root@198.211.97.243 -N
 
 echo [%date% %time%] Tunel caido. Reconectando en 10 segundos...
