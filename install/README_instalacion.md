@@ -86,7 +86,7 @@ Copiar el archivo `.bat` correspondiente a la sucursal a `C:\`:
 
 ```powershell
 # Ejemplo: copiar desde Google Drive al disco C
-Copy-Item "C:\Users\Pitaya\Google Drive BP\...\tunel_dvr_villafontana.bat" "C:\tunel_dvr_villafontana.bat"
+Copy-Item "C:\Users\Pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\tunel_dvr_lascolinas.bat" "C:\tunel_dvr_lascolinas.bat"
 ```
 
 ---
