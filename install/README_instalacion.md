@@ -94,7 +94,7 @@ Abrir **PowerShell como Administrador** y ejecutar:
 ```powershell
 powershell.exe -ExecutionPolicy Bypass -File "C:\users\pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\setup_tarea_programada.ps1" -BatPath "C:\tunel_dvr_lascolinas.bat" -NombreTarea "TunelDVR_Lascolinas"
 
-powershell.exe -ExecutionPolicy Bypass -File "C:\users\BatidosPitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\setup_tarea_programada.ps1" -BatPath "C:\tunel_dvr_leon.bat" -NombreTarea "TunelDVR_Leon"
+powershell.exe -ExecutionPolicy Bypass -File "C:\users\Pitaya\Google Drive BP\Sistema Ultima Version\Llaves WireGuard\setup_tarea_programada.ps1" -BatPath "C:\tunel_dvr_granada.bat" -NombreTarea "TunelDVR_Granada"
 ```
 
 > **Ajusta** `-BatPath` y `-NombreTarea` segun la sucursal. Ejemplos:
