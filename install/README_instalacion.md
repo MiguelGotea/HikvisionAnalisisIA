@@ -24,6 +24,7 @@
 | Las Brisas    | 16           | `tunel_dvr_lasbrisas.bat`     | 9561       | 192.168.0.160     |
 | Rivas         | 17           | `tunel_dvr_rivas.bat`         | 9587       | 192.168.40.170    |
 | Oficinas      | 18           | `tunel_dvr_oficinas.bat`      | 9588       | 192.168.0.200     |
+| Ticuantepe    | 20           | `tunel_dvr_ticuantepe.bat`    | 9590       | 192.168.1.200     |
 
 ---
 
