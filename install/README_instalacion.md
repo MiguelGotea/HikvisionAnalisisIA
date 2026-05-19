@@ -25,6 +25,7 @@
 | Rivas         | 17           | `tunel_dvr_rivas.bat`         | 9587       | 192.168.40.170    |
 | Oficinas      | 18           | `tunel_dvr_oficinas.bat`      | 9588       | 192.168.0.200     |
 | Ticuantepe    | 20           | `tunel_dvr_ticuantepe.bat`    | 9590       | 192.168.1.200     |
+| Calli         | 22           | `tunel_dvr_calli.bat`         | 9592       | 192.168.1.220     |
 
 ---
 
