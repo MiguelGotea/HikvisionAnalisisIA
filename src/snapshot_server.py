@@ -97,13 +97,12 @@ def _capture_frame_at_time(usuario: str, clave: str, puerto_rtsp: int,
     except ValueError:
         raise RuntimeError(f'Formato de fecha_hora inválido: {fecha_hora_str!r}')
 
-    # COMPENSACION DVR DS-7104: este modelo retorna el segmento que COMIENZA
-    # 1 minuto ANTES del starttime pedido. Confirmado empiricamente:
-    #   pedido 07:22:00 → DVR retorna segmento 07:21:00 (1 min de offset).
-    # Solución: sumamos 1 minuto al tiempo pedido para que el DVR entregue
-    # el segmento correcto con el frame del momento exacto solicitado.
-    start_ts  = ts_local + timedelta(minutes=1)   # +1 min compensa el offset del DVR DS-7104
-    end_ts    = ts_local + timedelta(minutes=3)   # ventana de 2 min desde el tiempo corregido
+    # Ventana de playback: starttime = momento exacto pedido, endtime = +2 min.
+    # El DVR retorna el primer frame del segmento que contiene starttime.
+    # NO hay compensacion adicional: el offset previo observado era un bug
+    # en la version anterior (ventana centrada restaba 1 min al starttime).
+    start_ts  = ts_local                        # momento exacto solicitado
+    end_ts    = ts_local + timedelta(minutes=2) # ventana de 2 min hacia adelante
     start_str = start_ts.strftime('%Y%m%dT%H%M%SZ')
     end_str   = end_ts.strftime('%Y%m%dT%H%M%SZ')
 
