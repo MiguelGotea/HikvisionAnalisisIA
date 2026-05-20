@@ -81,6 +81,66 @@ def _isapi_snapshot(usuario: str, clave: str,
 
 
 
+def _capture_frame_at_time(usuario: str, clave: str, puerto_rtsp: int,
+                           canal: int, fecha_hora_str: str,
+                           vps_ip: str = '127.0.0.1') -> bytes:
+    """
+    Captura un fotograma JPEG del DVR en un momento específico.
+    fecha_hora_str: hora LOCAL Nicaragua (CST = UTC-6), formato "YYYY-MM-DD HH:MM:SS"
+    Construye una ventana RTSP de ±1 minuto alrededor del momento pedido.
+    """
+    from datetime import datetime, timedelta
+
+    # Parsear la fecha/hora local NI recibida del PHP
+    try:
+        ts_local = datetime.strptime(fecha_hora_str, '%Y-%m-%d %H:%M:%S')
+    except ValueError:
+        raise RuntimeError(f'Formato de fecha_hora inválido: {fecha_hora_str!r}')
+
+    # El DVR graba en segmentos; pedir una ventana de 2 min centrada en el momento
+    start_ts = ts_local - timedelta(minutes=1)
+    end_ts   = ts_local + timedelta(minutes=1)
+    start_str = start_ts.strftime('%Y%m%dT%H%M%SZ')
+    end_str   = end_ts.strftime('%Y%m%dT%H%M%SZ')
+
+    log.info(f'Captura por hora: {fecha_hora_str} → ventana [{start_str} → {end_str}]')
+
+    rtsp_url = (
+        f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}"
+        f"/PSIA/Streaming/tracks/{canal}"
+        f"?starttime={start_str}&endtime={end_str}"
+    )
+
+    with tempfile.NamedTemporaryFile(suffix='.jpg', delete=False) as tmp:
+        tmp_path = tmp.name
+
+    try:
+        cmd = [
+            'ffmpeg', '-y',
+            '-rtsp_transport', 'tcp',
+            '-i', rtsp_url,
+            '-frames:v', '1',
+            '-update', '1',
+            '-q:v', '3',
+            tmp_path
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=FFMPEG_TIMEOUT)
+
+        if result.returncode == 0 and os.path.exists(tmp_path) and os.path.getsize(tmp_path) >= 1024:
+            log.info(f'Captura hora OK: {os.path.getsize(tmp_path)//1024}KB')
+            with open(tmp_path, 'rb') as f:
+                return f.read()
+        else:
+            stderr_tail = (result.stderr or '')[-400:]
+            raise RuntimeError(
+                f'ffmpeg falló (cod {result.returncode}). '
+                f'Verifica que el DVR tenga grabación en ese momento.\n{stderr_tail}'
+            )
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
+
+
 def _capture_frame(usuario: str, clave: str, puerto_rtsp: int,
                    canal: int, vps_ip: str = '127.0.0.1',
                    puerto_http: int = 0) -> bytes:
@@ -220,6 +280,9 @@ class SnapshotHandler(BaseHTTPRequestHandler):
             self._send_json(404, {'success': False, 'message': 'Endpoint no encontrado'})
 
     def do_POST(self):
+        if self.path == '/snapshot-hora':
+            self._handle_snapshot_hora()
+            return
         if self.path != '/snapshot':
             self._send_json(404, {'success': False, 'message': 'Endpoint no encontrado'})
             return
@@ -272,6 +335,57 @@ class SnapshotHandler(BaseHTTPRequestHandler):
             self._send_json(502, {'success': False, 'message': str(e)})
         except Exception as e:
             log.error(f'Error inesperado snapshot: {e}')
+            self._send_json(500, {'success': False, 'message': f'Error interno: {e}'})
+
+    def _handle_snapshot_hora(self):
+        """POST /snapshot-hora — captura un frame del DVR en una hora específica."""
+        # Autenticacion
+        if not self._check_token():
+            self._send_json(401, {'success': False, 'message': 'Token invalido'})
+            return
+
+        # Leer body JSON
+        try:
+            length = int(self.headers.get('Content-Length', 0))
+            body = self.rfile.read(length)
+            params = json.loads(body)
+        except Exception as e:
+            self._send_json(400, {'success': False, 'message': f'JSON invalido: {e}'})
+            return
+
+        usuario      = params.get('usuario', '').strip()
+        clave        = params.get('clave', '').strip()
+        puerto_rtsp  = int(params.get('puerto_rtsp', 0))
+        canal        = int(params.get('canal', 101))
+        vps_ip       = params.get('vps_ip', '127.0.0.1').strip()
+        fecha_hora   = params.get('fecha_hora', '').strip()  # "YYYY-MM-DD HH:MM:SS" hora NI
+
+        if not usuario or not clave or not puerto_rtsp or not fecha_hora:
+            self._send_json(400, {
+                'success': False,
+                'message': 'Faltan parametros: usuario, clave, puerto_rtsp, fecha_hora'
+            })
+            return
+
+        log.info(
+            f'Snapshot-hora solicitado: vps={vps_ip}:{puerto_rtsp} '
+            f'canal={canal} hora={fecha_hora}'
+        )
+
+        try:
+            jpeg_bytes = _capture_frame_at_time(usuario, clave, puerto_rtsp,
+                                                canal, fecha_hora, vps_ip)
+            log.info(f'Snapshot-hora OK: {len(jpeg_bytes) // 1024}KB')
+            self._send_jpeg(jpeg_bytes)
+        except subprocess.TimeoutExpired:
+            msg = f'Timeout ({FFMPEG_TIMEOUT}s) capturando snapshot-hora. Verifica tunel y grabacion en esa hora.'
+            log.error(msg)
+            self._send_json(504, {'success': False, 'message': msg})
+        except RuntimeError as e:
+            log.error(f'Error snapshot-hora: {e}')
+            self._send_json(502, {'success': False, 'message': str(e)})
+        except Exception as e:
+            log.error(f'Error inesperado snapshot-hora: {e}')
             self._send_json(500, {'success': False, 'message': f'Error interno: {e}'})
 
 
