@@ -97,13 +97,17 @@ def _capture_frame_at_time(usuario: str, clave: str, puerto_rtsp: int,
     except ValueError:
         raise RuntimeError(f'Formato de fecha_hora inválido: {fecha_hora_str!r}')
 
-    # El DVR graba en segmentos; pedir una ventana de 2 min centrada en el momento
-    start_ts = ts_local - timedelta(minutes=1)
-    end_ts   = ts_local + timedelta(minutes=1)
+    # El DVR graba en segmentos de ~5 min. Para obtener el frame MAS CERCANO
+    # al momento exacto, la ventana debe COMENZAR en ese instante (no centrada).
+    # ffmpeg pedira el playback desde start_str y extraera el primer frame
+    # del segmento que contiene ese momento → precision maxima.
+    # endtime se pone 2 min adelante para que el DVR tenga margen de respuesta.
+    start_ts  = ts_local                          # momento exacto pedido
+    end_ts    = ts_local + timedelta(minutes=2)   # ventana hacia adelante
     start_str = start_ts.strftime('%Y%m%dT%H%M%SZ')
     end_str   = end_ts.strftime('%Y%m%dT%H%M%SZ')
 
-    log.info(f'Captura por hora: {fecha_hora_str} → ventana [{start_str} → {end_str}]')
+    log.info(f'Captura por hora: {fecha_hora_str} → [{start_str} → {end_str}]')
 
     rtsp_url = (
         f"rtsp://{usuario}:{clave}@{vps_ip}:{puerto_rtsp}"
