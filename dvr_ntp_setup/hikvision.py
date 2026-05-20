@@ -65,13 +65,15 @@ class NtpServerInfo:
 def _base_url(dvr: dict) -> str:
     """
     Construye la URL base HTTP del DVR.
-    Si puerto_http_vps está definido (>0) usa el VPS; si no usa la IP local directa.
-    Desde el VPS ambas rutas son accesibles gracias al túnel.
+    Si puerto_http_vps está definido (>0) usa el túnel SSH inverso local del VPS:
+      El túnel mapea  localhost:{puerto_http_vps}  →  DVR_IP:80
+    Si no, accede directamente a la IP local (VPS tiene ruta vía túnel WireGuard/VPN).
     """
     puerto_http = dvr.get('puerto_http_vps') or 0
     if int(puerto_http) > 0:
-        return f"http://{config.API_BASE_URL.split('//')[1].split('/')[0]}:{puerto_http}"
-    # Acceso directo a IP local (VPS tiene ruta por el túnel)
+        # El túnel SSH inverso corre en el VPS: localhost:puerto → DVR remoto
+        return f"http://127.0.0.1:{puerto_http}"
+    # Sin túnel HTTP: acceso directo a IP privada (ruta disponible vía bridge)
     ip = dvr['portal_ip_local']
     return f"http://{ip}:80"
 
