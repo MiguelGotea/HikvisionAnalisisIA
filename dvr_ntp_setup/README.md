@@ -16,7 +16,6 @@ HikvisionAnalisisIA/
     ├── logger.py            # Logging consola + archivo rotativo
     ├── main.py              # Entry point y orquestador
     ├── notifier.py          # Webhook de resumen al finalizar
-    ├── test_hikvision.py    # Tests unitarios (sin red real)
     ├── requirements.txt     # requests + python-dotenv
     ├── .env.example         # Plantilla de variables opcionales
     └── logs/
@@ -29,6 +28,17 @@ dvr-ntp-setup.service   # oneshot que ejecuta el script
 dvr-ntp-setup.timer     # dispara a medianoche Nicaragua (06:00 UTC)
 ```
 
+El endpoint PHP que expone los DVRs desde la BD está en el repo `api.batidospitaya.com`:
+```
+api/hikvision/dvr_sucursales.php
+```
+
+> **Nota — Firmware legacy:** Algunos DVRs más antiguos no soportan el endpoint
+> `ISAPI/System/time/NtpServers/1` (devuelven 404 en GET y PUT). El script detecta esto
+> automáticamente, aplica el cambio de `timeMode=NTP` vía `ISAPI/System/time` (compatible
+> con todos los modelos), y marca el DVR como `SUCCESS`. Estos modelos también pueden
+> devolver `timeMode=''` en el GET aunque el cambio se haya aplicado (quirk de firmware).
+
 ---
 
 ## ¿Qué necesita el .env?
@@ -39,11 +49,10 @@ El módulo reutiliza el `.env` principal del proyecto en `/opt/hikvision-ia/.env
 - `HIK_API_TOKEN` — token para `api.batidospitaya.com`
 - `HIK_API_BASE_URL` — URL base de la API
 
-Las variables específicas de NTP (`NTP_SERVER`, `HIK_TIMEZONE`, `TIMEOUT_SEGUNDOS`, etc.) tienen valores por defecto sensatos en `config.py`.
+Las variables específicas de NTP (`NTP_SERVER`, `HIK_TIMEZONE`, `TIMEOUT_SEGUNDOS`, etc.) tienen valores por defecto en `config.py`.
 
-**Solo necesitás un `.env.local`** si querés sobreescribir algún valor, por ejemplo para configurar el webhook:
+**Solo necesitás un `.env.local`** si querés sobreescribir algún valor (p. ej. webhook):
 ```bash
-# Opcional — solo si querés webhook o cambiar parámetros
 cp /opt/hikvision-ia/dvr_ntp_setup/.env.example \
    /opt/hikvision-ia/dvr_ntp_setup/.env.local
 nano /opt/hikvision-ia/dvr_ntp_setup/.env.local
@@ -53,8 +62,7 @@ nano /opt/hikvision-ia/dvr_ntp_setup/.env.local
 
 ## Instalación completa en el VPS
 
-### Prerequisitos
-El código llega automáticamente al VPS vía GitHub Actions cuando se hace push al repo. No hay que copiar nada manualmente.
+El código llega automáticamente al VPS vía GitHub Actions en cada push.
 
 ### Paso 1 — Verificar dependencias
 ```bash
@@ -80,14 +88,16 @@ cd /opt/hikvision-ia
 /opt/hikvision-ia/venv/bin/python -m dvr_ntp_setup.main --dry-run
 ```
 
-✅ Instalación completa. El timer corre solo desde aquí.
+✅ Instalación completa. El timer corre automáticamente desde aquí.
 
 ---
 
 ## Uso manual
 
+> **Importante:** ejecutar siempre desde `/opt/hikvision-ia/`
+
 ```bash
-cd /opt/hikvision-ia   # ← IMPORTANTE: ejecutar siempre desde aquí
+cd /opt/hikvision-ia
 
 # Todos los DVRs activos
 /opt/hikvision-ia/venv/bin/python -m dvr_ntp_setup.main
@@ -102,10 +112,17 @@ cd /opt/hikvision-ia   # ← IMPORTANTE: ejecutar siempre desde aquí
 /opt/hikvision-ia/venv/bin/python -m dvr_ntp_setup.main --workers 10
 ```
 
+**Alias opcional para no escribir el path completo:**
+```bash
+echo "alias dvr-ntp='/opt/hikvision-ia/venv/bin/python -m dvr_ntp_setup.main'" >> ~/.bashrc
+source ~/.bashrc
+# Uso: dvr-ntp --cod-sucursal 2
+```
+
 ### Ejecutar el servicio systemd manualmente
 ```bash
 systemctl start dvr-ntp-setup.service
-journalctl -u dvr-ntp-setup -f   # seguir logs en tiempo real
+journalctl -u dvr-ntp-setup -f
 ```
 
 ---
@@ -114,30 +131,26 @@ journalctl -u dvr-ntp-setup -f   # seguir logs en tiempo real
 
 ### Prueba completa — Simular un corte de luz
 
-Esta es la prueba definitiva: desconfigurar un DVR manualmente y luego dejar que el script lo corrija.
+Esta es la prueba definitiva: desconfigurar un DVR manualmente y dejar que el script lo corrija.
 
-#### Paso 1 — Verificar el estado actual del DVR
-
-Desde el VPS, usando el tunnel del DVR León (cod_sucursal=2, puerto 9652):
+#### Paso 1 — Verificar estado actual del DVR
 
 ```bash
-# Consultar tiempo actual del DVR León
-curl -s --digest -u admin:abcd1234 \
+# Sustituir 9652 por el puerto HTTP VPS del DVR y las credenciales correctas
+curl -s --digest -u admin:CLAVE \
   http://127.0.0.1:9652/ISAPI/System/time | grep -E "timeMode|timeZone"
 ```
 
-Respuesta esperada cuando está bien configurado:
+Resultado cuando está bien configurado:
 ```xml
 <timeMode>NTP</timeMode>
 <timeZone>CST+6:00:00</timeZone>
 ```
 
-#### Paso 2 — Desconfigurar el DVR (simular corte de luz)
-
-Poner el DVR en modo manual (como quedaría tras un reinicio sin NTP):
+#### Paso 2 — Desconfigurar (simular corte de luz)
 
 ```bash
-curl -s --digest -u admin:abcd1234 \
+curl -s --digest -u admin:CLAVE \
   -X PUT http://127.0.0.1:9652/ISAPI/System/time \
   -H "Content-Type: application/xml" \
   -d '<?xml version="1.0" encoding="UTF-8"?>
@@ -150,8 +163,8 @@ curl -s --digest -u admin:abcd1234 \
 #### Paso 3 — Confirmar que quedó en manual
 
 ```bash
-curl -s --digest -u admin:abcd1234 \
-  http://127.0.0.1:9652/ISAPI/System/time | grep -E "timeMode|timeZone"
+curl -s --digest -u admin:CLAVE \
+  http://127.0.0.1:9652/ISAPI/System/time | grep timeMode
 # Debe mostrar: <timeMode>manual</timeMode>
 ```
 
@@ -173,38 +186,20 @@ Salida esperada:
 #### Paso 5 — Confirmar que quedó corregido
 
 ```bash
-curl -s --digest -u admin:abcd1234 \
+curl -s --digest -u admin:CLAVE \
   http://127.0.0.1:9652/ISAPI/System/time | grep -E "timeMode|timeZone"
-# Debe mostrar: <timeMode>NTP</timeMode>
+# <timeMode>NTP</timeMode>
 
-curl -s --digest -u admin:abcd1234 \
+curl -s --digest -u admin:CLAVE \
   http://127.0.0.1:9652/ISAPI/System/time/NtpServers/1 | grep hostName
-# Debe mostrar: <hostName>time.google.com</hostName>
+# <hostName>time.google.com</hostName>
 ```
 
 ---
 
-### Prueba rápida desde la interfaz web del DVR
-
-Si tenés acceso a la interfaz web del DVR (navegador):
-
-1. Entrar a `http://192.168.1.20` (desde la red local) o `http://127.0.0.1:9652` (desde el VPS)
-2. Ir a **Configuración → Sistema → Hora**
-3. Cambiar **Modo de sincronización** a "Manual"
-4. Guardar
-5. Ejecutar el script: `/opt/hikvision-ia/venv/bin/python -m dvr_ntp_setup.main --cod-sucursal 2`
-6. Recargar la página — debe mostrar modo NTP con `time.google.com`
-
----
-
-### Prueba de verificación directa (sin ejecutar el script)
-
-Para verificar el estado NTP de cualquier DVR desde el VPS sin ejecutar el script completo:
+### Verificar estado de cualquier DVR sin ejecutar el script
 
 ```bash
-# Sustituir 9652 por el puerto del DVR que querés verificar
-# y las credenciales correspondientes
-
 # Ver modo de tiempo
 curl -s --digest -u USUARIO:CLAVE \
   http://127.0.0.1:PUERTO/ISAPI/System/time
@@ -214,15 +209,11 @@ curl -s --digest -u USUARIO:CLAVE \
   http://127.0.0.1:PUERTO/ISAPI/System/time/NtpServers/1
 ```
 
----
-
-### Puertos de cada sucursal (referencia rápida)
-
-Los puertos están en la BD (`puerto_http_vps`). Para consultarlos:
+### Consultar puertos de todas las sucursales
 
 ```bash
-# Ver qué DVRs están activos y sus puertos
-curl -s -H "X-WSP-Token: $(grep HIK_API_TOKEN /opt/hikvision-ia/.env | cut -d= -f2)" \
+curl -s \
+  -H "X-WSP-Token: $(grep HIK_API_TOKEN /opt/hikvision-ia/.env | cut -d= -f2)" \
   "https://api.batidospitaya.com/api/hikvision/dvr_sucursales.php?tunel_activo=1" \
   | python3 -m json.tool | grep -E "nombre_sucursal|puerto_http_vps|portal_ip_local"
 ```
@@ -237,8 +228,8 @@ curl -s -H "X-WSP-Token: $(grep HIK_API_TOKEN /opt/hikvision-ia/.env | cut -d= -
 | `ALREADY_OK` | Ya tenía NTP con `time.google.com` — sin cambios |
 | `UNREACHABLE` | Timeout o error de conexión (sin túnel / DVR apagado) |
 | `AUTH_ERROR` | 401 Unauthorized — credenciales incorrectas |
-| `PARTIAL` | Algunos pasos OK pero verificación final discrepante |
-| `FAILED` | Error inesperado durante el proceso |
+| `PARTIAL` | Error inesperado en algún paso de configuración |
+| `FAILED` | Excepción no manejada |
 
 ---
 
@@ -249,17 +240,6 @@ curl -s -H "X-WSP-Token: $(grep HIK_API_TOKEN /opt/hikvision-ia/.env | cut -d= -
 | `0` | Todos los DVRs son SUCCESS o ALREADY_OK |
 | `1` | Al menos un DVR falló, UNREACHABLE o AUTH_ERROR |
 | `2` | Error fatal (API no disponible, variable faltante) |
-
----
-
-## Tests unitarios
-
-No requieren red ni DVRs reales:
-
-```bash
-cd /opt/hikvision-ia
-/opt/hikvision-ia/venv/bin/python -m pytest dvr_ntp_setup/test_hikvision.py -v
-```
 
 ---
 
@@ -297,7 +277,7 @@ journalctl -u dvr-ntp-setup --since today
 
 ## Acceso a DVRs
 
-El script corre en el **VPS** con acceso directo a los DVRs vía túnel SSH inverso:
+El script corre en el **VPS** con acceso a los DVRs vía túnel SSH inverso:
 
-- DVRs con `puerto_http_vps` → `http://127.0.0.1:{puerto}` (túnel local)
+- DVRs con `puerto_http_vps` → `http://127.0.0.1:{puerto}` (túnel local en el VPS)
 - DVRs sin `puerto_http_vps` → `http://{portal_ip_local}:80` (IP directa por bridge)
