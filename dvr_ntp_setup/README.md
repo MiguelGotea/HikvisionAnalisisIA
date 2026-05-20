@@ -192,7 +192,7 @@ Si tenés acceso a la interfaz web del DVR (navegador):
 2. Ir a **Configuración → Sistema → Hora**
 3. Cambiar **Modo de sincronización** a "Manual"
 4. Guardar
-5. Ejecutar el script: `python -m dvr_ntp_setup.main --cod-sucursal 2`
+5. Ejecutar el script: `/opt/hikvision-ia/venv/bin/python -m dvr_ntp_setup.main --cod-sucursal 2`
 6. Recargar la página — debe mostrar modo NTP con `time.google.com`
 
 ---

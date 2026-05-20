@@ -107,17 +107,43 @@ def _procesar_dvr(dvr: dict, dry_run: bool) -> Dict:
         return {**base_result, 'resultado': 'FAILED', 'error': f'PUT time: {exc}'}
 
     # ── PASO 5: Configurar servidor NTP ───────────────────────
+    ntp_endpoint_ok = True
     try:
         set_ntp_server(dvr)
         steps_ok += 1
+    except requests.exceptions.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code == 404:
+            # Firmware antiguo: endpoint NtpServers/1 no soportado.
+            # timeMode=NTP ya fue configurado (paso 4) — suficiente.
+            log.warning(
+                f"[{label}] {ip} — NtpServers/1 no soportado por este firmware (404). "
+                f"timeMode=NTP aplicado correctamente."
+            )
+            ntp_endpoint_ok = False
+        else:
+            log.error(f"[{label}] {ip} — PARTIAL: PUT NtpServers/1 falló: {exc}")
+            return {**base_result, 'resultado': 'PARTIAL', 'error': f'PUT NtpServer: {exc}'}
     except Exception as exc:
         log.error(f"[{label}] {ip} — PARTIAL: PUT NtpServers/1 falló: {exc}")
         return {**base_result, 'resultado': 'PARTIAL', 'error': f'PUT NtpServer: {exc}'}
 
     # ── PASO 6: Verificación final ────────────────────────────
     try:
-        final_time  = get_time(dvr)
-        final_ntp   = get_ntp_server(dvr)
+        final_time = get_time(dvr)
+
+        if not ntp_endpoint_ok:
+            # Firmware sin soporte NtpServers/1: solo verificar timeMode y tz
+            if final_time.time_mode.upper() == 'NTP' and final_time.time_zone == config.HIK_TIMEZONE:
+                log.info(f"[{label}] {ip} — Verificación OK (NTP mode + tz, sin endpoint NtpServer) → SUCCESS")
+                return {**base_result, 'resultado': 'SUCCESS', 'error': None}
+            else:
+                log.warning(
+                    f"[{label}] {ip} — Verificación fallida: "
+                    f"timeMode={final_time.time_mode!r}, tz={final_time.time_zone!r}"
+                )
+                return {**base_result, 'resultado': 'PARTIAL', 'error': 'timeMode o tz no aplicado correctamente'}
+
+        final_ntp = get_ntp_server(dvr)
         if is_already_ok(final_time, final_ntp):
             log.info(f"[{label}] {ip} — Verificación OK → SUCCESS")
             return {**base_result, 'resultado': 'SUCCESS', 'error': None}
