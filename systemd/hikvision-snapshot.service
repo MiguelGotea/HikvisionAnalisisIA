@@ -3,16 +3,24 @@ Description=HikvisionAnalisisIA — Snapshot server (captura frames via RTSP/ffm
 Documentation=https://github.com/tu-org/hikvisionanalisisia
 After=network-online.target
 Wants=network-online.target
+# Evitar bucle infinito de reinicios (max 5 intentos en 60s)
+StartLimitIntervalSec=60
+StartLimitBurst=5
 
 [Service]
 Type=simple
 User=root
 WorkingDirectory=/opt/hikvision-ia
 
+# Matar cualquier proceso que ocupe el puerto 8765 antes de arrancar
+# Previene el error "OSError: [Errno 98] Address already in use"
+ExecStartPre=/bin/bash -c 'fuser -k 8765/tcp 2>/dev/null || true'
+ExecStartPre=/bin/sleep 1
+
 # Servidor HTTP para snapshots sincrono
 ExecStart=/opt/hikvision-ia/venv/bin/python -m src.snapshot_server
 
-# Reiniciar siempre si cae
+# Reiniciar siempre si cae (con limite definido en [Unit])
 Restart=always
 RestartSec=10
 
