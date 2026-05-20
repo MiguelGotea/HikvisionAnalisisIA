@@ -20,19 +20,20 @@
 require_once __DIR__ . '/../_auth.php';   // valida X-WSP-Token
 require_once __DIR__ . '/../_db.php';     // $pdo — conexión a la BD
 
+
 header('Content-Type: application/json; charset=utf-8');
 
 // ── Construcción de la query ──────────────────────────────────
-$where  = [];
+$where = [];
 $params = [];
 
 if (isset($_GET['tunel_activo'])) {
-    $where[]           = 'tunel_activo = :tunel_activo';
+    $where[] = 'tunel_activo = :tunel_activo';
     $params[':tunel_activo'] = (int) $_GET['tunel_activo'];
 }
 
 if (isset($_GET['cod_sucursal'])) {
-    $where[]             = 'cod_sucursal = :cod_sucursal';
+    $where[] = 'cod_sucursal = :cod_sucursal';
     $params[':cod_sucursal'] = (int) $_GET['cod_sucursal'];
 }
 
@@ -61,21 +62,21 @@ try {
 
     // Normalizar tipos numéricos
     foreach ($dvrs as &$dvr) {
-        $dvr['cod_sucursal']   = (int) $dvr['cod_sucursal'];
+        $dvr['cod_sucursal'] = (int) $dvr['cod_sucursal'];
         $dvr['puerto_rtsp_vps'] = $dvr['puerto_rtsp_vps'] !== null ? (int) $dvr['puerto_rtsp_vps'] : null;
-        $dvr['tunel_activo']   = (bool) $dvr['tunel_activo'];
+        $dvr['tunel_activo'] = (bool) $dvr['tunel_activo'];
         $dvr['puerto_http_vps'] = $dvr['puerto_http_vps'] !== null ? (int) $dvr['puerto_http_vps'] : null;
     }
 
     echo json_encode([
         'success' => true,
-        'dvrs'    => $dvrs,
+        'dvrs' => $dvrs,
     ], JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
 
 } catch (PDOException $e) {
     http_response_code(500);
     echo json_encode([
         'success' => false,
-        'error'   => 'Error de base de datos',
+        'error' => 'Error de base de datos',
     ]);
 }
