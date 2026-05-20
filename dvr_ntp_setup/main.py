@@ -132,9 +132,18 @@ def _procesar_dvr(dvr: dict, dry_run: bool) -> Dict:
         final_time = get_time(dvr)
 
         if not ntp_endpoint_ok:
-            # Firmware sin soporte NtpServers/1: solo verificar timeMode y tz
-            if final_time.time_mode.upper() == 'NTP' and final_time.time_zone == config.HIK_TIMEZONE:
-                log.info(f"[{label}] {ip} — Verificación OK (NTP mode + tz, sin endpoint NtpServer) → SUCCESS")
+            # Firmware sin soporte NtpServers/1: verificar timeMode y tz.
+            # Algunos firmwares aplican el cambio (PUT→200) pero el GET siempre
+            # devuelve timeMode='' (no reportan el campo). En ese caso confiamos
+            # en el 200 del PUT y marcamos SUCCESS.
+            if (
+                final_time.time_mode.upper() in ('NTP', '')
+                and (final_time.time_zone == config.HIK_TIMEZONE or final_time.time_zone == '')
+            ):
+                log.info(
+                    f"[{label}] {ip} — Firmware legacy: PUT→200 aceptado. "
+                    f"timeMode={final_time.time_mode!r} (vacío = firmware quirk). → SUCCESS"
+                )
                 return {**base_result, 'resultado': 'SUCCESS', 'error': None}
             else:
                 log.warning(
