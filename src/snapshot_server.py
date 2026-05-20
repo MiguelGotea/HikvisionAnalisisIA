@@ -44,7 +44,7 @@ log = get_logger('snapshot_server')
 
 SNAPSHOT_PORT  = int(os.getenv('SNAPSHOT_PORT', '8765'))
 FFMPEG_TIMEOUT = 20   # segundos maximos para capturar un frame via RTSP
-ISAPI_TIMEOUT  = 5    # segundos para el intento ISAPI HTTP (debe ser rapido)
+ISAPI_TIMEOUT  = 10   # segundos para el intento ISAPI HTTP — aumentado para reducir fallos en tunnels lentos
 
 
 def _isapi_snapshot(usuario: str, clave: str,
@@ -97,12 +97,13 @@ def _capture_frame_at_time(usuario: str, clave: str, puerto_rtsp: int,
     except ValueError:
         raise RuntimeError(f'Formato de fecha_hora inválido: {fecha_hora_str!r}')
 
-    # Ventana de playback: starttime = momento exacto pedido, endtime = +2 min.
-    # El DVR retorna el primer frame del segmento que contiene starttime.
-    # NO hay compensacion adicional: el offset previo observado era un bug
-    # en la version anterior (ventana centrada restaba 1 min al starttime).
-    start_ts  = ts_local                        # momento exacto solicitado
-    end_ts    = ts_local + timedelta(minutes=2) # ventana de 2 min hacia adelante
+    # COMPENSACION DVR DS-7104 — Confirmada con multiples pruebas:
+    # Al enviar starttime=X el DVR retorna el segmento que comienza en X+1 min.
+    # Ejemplos: enviar 07:56 → recibe 07:57 | enviar 07:42 → recibe 07:43
+    # Solucion: restar 1 minuto al starttime para que DVR retorne el segmento
+    # que el usuario realmente solicito.
+    start_ts  = ts_local - timedelta(minutes=1)  # -1 min compensa avance del DVR DS-7104
+    end_ts    = ts_local + timedelta(minutes=1)  # ventana total de 2 min
     start_str = start_ts.strftime('%Y%m%dT%H%M%SZ')
     end_str   = end_ts.strftime('%Y%m%dT%H%M%SZ')
 
