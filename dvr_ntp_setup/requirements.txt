@@ -1,0 +1,5 @@
+# dvr_ntp_setup — dependencias Python
+# Compatible con el entorno venv del proyecto principal en /opt/hikvision-ia/venv
+
+requests==2.32.3
+python-dotenv==1.0.1

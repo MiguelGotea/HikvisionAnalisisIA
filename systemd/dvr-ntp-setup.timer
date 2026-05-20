@@ -1,0 +1,15 @@
+[Unit]
+Description=DVR NTP Setup — Timer diario (02:00 hora Nicaragua)
+After=network-online.target
+
+[Timer]
+# Ejecutar a las 02:00 hora del sistema (VPS en UTC, 02:00 UTC = 20:00 Nicaragua
+# si querés a medianoche Nicaragua cambiá a 06:00 UTC)
+OnCalendar=*-*-* 06:00:00
+# También ejecutar inmediatamente si el último disparo fue mientras el sistema estaba apagado
+Persistent=true
+# Añadir un jitter de hasta 5 min para no saturar la red en el segundo exacto
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

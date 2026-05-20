@@ -1,0 +1,32 @@
+[Unit]
+Description=DVR NTP Setup — Sincronización periódica de hora en DVRs Hikvision
+Documentation=https://github.com/tu-org/hikvisionanalisisia
+After=network-online.target
+Wants=network-online.target
+# Máx 5 intentos en 5 minutos antes de detenerse permanentemente
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/opt/hikvision-ia
+
+# Ejecuta el módulo NTP y pasa el código de salida al sistema
+ExecStart=/opt/hikvision-ia/venv/bin/python -m dvr_ntp_setup.main
+
+# Variables de entorno: primero el .env principal, luego el override local
+EnvironmentFile=/opt/hikvision-ia/.env
+EnvironmentFile=-/opt/hikvision-ia/dvr_ntp_setup/.env.local
+
+# Logging vía journald (igual que los otros servicios del proyecto)
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=dvr-ntp-setup
+
+# Limites
+TimeoutStartSec=300
+LimitNOFILE=1024
+
+[Install]
+WantedBy=multi-user.target
