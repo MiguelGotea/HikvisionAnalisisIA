@@ -2,22 +2,24 @@
 
 Sistema automatizado de análisis de atención al cliente mediante cámaras DVR HiLook/Hikvision e Inteligencia Artificial (Gemini 2.5 Flash).
 
-> **Estado**: ✅ Producción — Primera prueba exitosa el 2026-05-03 con sucursal Granada.
+> **Estado**: ✅ Producción — Totalmente integrado en el ERP (`historial_ventas.php`) con control de worker y vistas detalladas de resultados IA.
 
 ---
 
 ## Arquitectura
 
-```
+```text
 api.batidospitaya.com (Hostinger)          VPS DigitalOcean (198.211.97.243)
 ──────────────────────────────────         ────────────────────────────────────
 api/hikvision/                             /opt/hikvision-ia/
   ├── encolar_pedido.php    ◄─ POST        src/
   ├── encolar_dia_completo.php ◄─ POST       ├── worker.py      (daemon loop)
-  ├── pedidos_cola.php      ──► GET           ├── downloader.py  (RTSP/ffmpeg)
-  ├── marcar_estado.php     ◄─ POST           ├── preprocessor.py(compresión)
-  ├── registrar_resultado.php ◄─ POST         └── analyzer.py    (Gemini IA)
+  ├── pedidos_cola.php      ──► GET          ├── downloader.py  (RTSP/ffmpeg)
+  ├── marcar_estado.php     ◄─ POST          ├── preprocessor.py(compresión)
+  ├── registrar_resultado.php ◄─ POST        └── analyzer.py    (Gemini IA)
   ├── reprocesar_pedido.php ◄─ POST
+  ├── worker_status.php     ◄─ GET/POST
+  ├── worker.flag.json      (Runtime Flag)
   └── gemini_key.php        ──► GET
 
 BD u839374897_erp (Hostinger)              Túneles SSH inversos (por sucursal)
@@ -29,35 +31,28 @@ BD u839374897_erp (Hostinger)              Túneles SSH inversos (por sucursal)
 
 ---
 
-## Flujo de procesamiento
+## Flujo de procesamiento (Integración ERP)
 
-```
-Pedido encolado (manual o automático)
-        │
-        ▼
-worker.py: poll cada 30s a pedidos_cola.php
-        │
-        ▼
-downloader.py: RTSP via túnel SSH (hora Nicaragua directa, DVR la trata como local)
-  rtsp://admin:PASS@198.211.97.243:9554/PSIA/Streaming/tracks/101
-  ?starttime=20260502T183037Z&endtime=20260502T183209Z
-  Audio pcm_mulaw (G.711) → transcodificado a AAC para MP4
-        │ ~11 MB / 92 seg
-        ▼
-preprocessor.py: comprimir con ffmpeg
-  480p | 5fps | 300kbps → ~3.7 MB (67% reducción)
-        │
-        ▼
-analyzer.py: Gemini Files API
-  Upload → PROCESSING → ACTIVE → generateContent → JSON
-  Modelo: gemini-2.5-flash | maxOutputTokens: 4096
-        │
-        ▼
-registrar_resultado.php → BD hikvision_analisis_ia_atencion
-  amabilidad, saludo, despedida, membresía (1-10) + resumen
-        │
-        ▼
-Limpiar archivos temp del VPS
+```text
+ERP (historial_ventas.php)
+  ├── Activar Bot (POST worker_status.php) 
+  │     └─ Encola automáticamente todos los pedidos del día actual.
+  │
+  └── Botón Analizar (POST encolar_pedido.php)
+        └─ Encola pedido manual para cualquier día.
+
+VPS Worker (worker.py)
+  ├── poll cada 30s a pedidos_cola.php
+  │     └─ pedidos_cola.php valida si worker.flag.json está activo.
+  │        Solo retorna pedidos pendientes del día actual (CURDATE()).
+  │
+  ├── downloader.py: RTSP via túnel SSH
+  ├── preprocessor.py: compresión con ffmpeg
+  └── analyzer.py: análisis con Gemini 2.5 Flash
+
+API (worker_status.php - Auto Encolado)
+  └── Cada 5 min (al ser consultado vía polling desde el ERP),
+      re-encola pedidos nuevos que hayan ingresado en el transcurso del día.
 ```
 
 ---
@@ -66,13 +61,13 @@ Limpiar archivos temp del VPS
 
 | Tema | Comportamiento real |
 |------|---------------------|
+| **Control del Worker** | El start/stop desde el ERP **no utiliza base de datos**, sino que se guarda en `api/hikvision/worker.flag.json`. Esto evita migraciones de tabla y separa el estado runtime de los datos. |
+| **Worker Restricción** | El worker **solo** recibe de `pedidos_cola.php` pedidos de `CURDATE()`. Para re-analizar o analizar días anteriores, se debe hacer de forma puntual usando la opción "Analizar" del pedido individual en el historial de ventas. |
 | **Timestamps DVR** | Los DVR HiLook/Hikvision indexan por **hora local**, ignoran el sufijo `Z`. Enviar hora Nicaragua directamente (sin convertir a UTC). |
 | **Audio DVR** | El DVR transmite `pcm_mulaw` (G.711). MP4 no lo acepta en modo `copy`. Transcodificar a AAC: `-c:a aac`. |
 | **Gemini Files API** | Solo funciona con `v1beta`. El campo `file_data` no existe en `v1`. |
 | **Polling estado** | El GET de un archivo retorna `{"state":"ACTIVE"}` en la raíz (NO dentro de `{"file":{...}}`). |
 | **URL archivos** | `file_name` ya incluye prefijo `files/`. Usar `v1beta/{file_name}` no `v1beta/files/{file_name}`. |
-| **Modelo disponible** | Este key tiene Gemini 2.0/2.5 (no 1.5). Modelo confirmado: `gemini-2.5-flash`. |
-| **thinkingConfig** | Va **dentro** de `generationConfig`, no en la raíz del payload. |
 | **maxOutputTokens** | Usar 4096 mínimo. Con 1024 el JSON se trunca porque 2.5-flash usa tokens internamente. |
 
 ---
@@ -135,7 +130,16 @@ mysql -u root -p -e "SELECT estado, COUNT(*) FROM u839374897_erp.hikvision_cola_
 
 ---
 
-## Herramientas API
+## Herramientas API Principales
+
+### Control del Worker (Start/Stop)
+```http
+POST https://api.batidospitaya.com/api/hikvision/worker_status.php
+X-WSP-Token: <token>
+Content-Type: application/json
+
+{ "action": "start", "updated_by": "Usuario ERP" }
+```
 
 ### Encolar pedido puntual (manual)
 ```http
@@ -154,50 +158,13 @@ Content-Type: application/json
 
 { "fecha": "2026-05-03", "local": "10" }
 ```
-> Omitir `local` para encolar todas las sucursales activas del día.
-
-### Reprocesar un fallido
-```http
-POST https://api.batidospitaya.com/api/hikvision/reprocesar_pedido.php
-X-WSP-Token: <token>
-Content-Type: application/json
-
-{ "cod_pedido": 12345, "local": "10" }
-```
-
----
-
-## Activar el worker daemon
-
-```bash
-# 1. Verificar que el .env tiene los valores correctos
-cat /opt/hikvision-ia/.env
-
-# 2. Registrar e iniciar el servicio
-cp /opt/hikvision-ia/systemd/hikvision-worker.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable hikvision-worker   # Arranque automático con el VPS
-systemctl start hikvision-worker
-
-# 3. Verificar que arrancó bien
-systemctl status hikvision-worker
-journalctl -u hikvision-worker -n 20
-
-# 4. Encolar algunos pedidos de prueba
-curl -s -X POST https://api.batidospitaya.com/api/hikvision/encolar_pedido.php \
-  -H "X-WSP-Token: TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"cod_pedido":64787,"local":"10"}'
-
-# 5. Monitorear que el worker los procesa
-journalctl -u hikvision-worker -f
-```
+> Omitir `local` para encolar todas las sucursales activas del día. (Esta función la ejecuta automáticamente `worker_status.php` al encender el bot o cada 5 minutos en background).
 
 ---
 
 ## Estructura del proyecto
 
-```
+```text
 hikvisionanalisisia/
 ├── src/
 │   ├── __init__.py
@@ -246,8 +213,9 @@ hikvisionanalisisia/
 
 ## Próxima etapa
 
-- [ ] Activar worker daemon: `systemctl start hikvision-worker`
-- [ ] Extender a Las Brisas (puerto 9561 ya reservado)
-- [ ] Encolar día completo automáticamente (cron diario a las 23:00 NI)
-- [ ] Dashboard en `erp.batidospitaya.com` para ver calificaciones
-- [ ] Expandir análisis: limpieza de local, cumplimiento de tiempos
+- [x] Dashboard en `erp.batidospitaya.com` para ver calificaciones e interacciones.
+- [x] Control del worker (encender/apagar) integrado desde ERP.
+- [x] Auto-encolar día completo automáticamente sin generar duplicados.
+- [ ] Expandir análisis: limpieza de local, cumplimiento de tiempos.
+- [ ] Extender a Las Brisas (puerto 9561 ya reservado) y demás sucursales.
+
